@@ -1,0 +1,82 @@
+[
+  {
+    "id": 1,
+    "name": "HackMIT",
+    "org": "MIT",
+    "city": "Cambridge, MA",
+    "prize": "$50K+",
+    "size": "2,000+",
+    "votes": 3124,
+    "wins": 2187
+  },
+  {
+    "id": 2,
+    "name": "TreeHacks",
+    "org": "Stanford",
+    "city": "Palo Alto, CA",
+    "prize": "$75K+",
+    "size": "1,500+",
+    "votes": 2891,
+    "wins": 2034
+  },
+  {
+    "id": 3,
+    "name": "PennApps",
+    "org": "UPenn",
+    "city": "Philadelphia, PA",
+    "prize": "$30K+",
+    "size": "1,200+",
+    "votes": 2543,
+    "wins": 1672
+  },
+  {
+    "id": 4,
+    "name": "HackGT",
+    "org": "Georgia Tech",
+    "city": "Atlanta, GA",
+    "prize": "$25K+",
+    "size": "1,000+",
+    "votes": 2210,
+    "wins": 1398
+  },
+  {
+    "id": 5,
+    "name": "MHacks",
+    "org": "Michigan",
+    "city": "Ann Arbor, MI",
+    "prize": "$20K+",
+    "size": "900+",
+    "votes": 1987,
+    "wins": 1201
+  },
+  {
+    "id": 6,
+    "name": "HackNY",
+    "org": "NYU",
+    "city": "New York, NY",
+    "prize": "$15K+",
+    "size": "500+",
+    "votes": 1856,
+    "wins": 1089
+  },
+  {
+    "id": 7,
+    "name": "WildHacks",
+    "org": "Northwestern",
+    "city": "Evanston, IL",
+    "prize": "$10K+",
+    "size": "600+",
+    "votes": 1543,
+    "wins": 876
+  },
+  {
+    "id": 8,
+    "name": "HackDuke",
+    "org": "Duke",
+    "city": "Durham, NC",
+    "prize": "$12K+",
+    "size": "700+",
+    "votes": 1312,
+    "wins": 712
+  }
+]
