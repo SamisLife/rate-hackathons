@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import hackathonsData from "../data/hackathons.json";
 
 type Ratings = {
@@ -20,47 +20,117 @@ type Hackathon = {
   size: string;
   votes: number;
   wins: number;
-  color?: string;
-  accent?: string;
-  accommodation?: boolean;
-  reimbursement?: boolean;
+  color: string;
+  accent: string;
+  accommodation: boolean;
+  reimbursement: boolean;
   ratings: Ratings;
 };
 
 type ViewMode = "vote" | "rankings";
+type VotePhase = "idle" | "voted";
+type CardState = "idle" | "winner" | "loser";
 
-type PillTone = "neutral" | "green" | "blue";
+type IconProps = {
+  s?: number;
+  c?: string;
+};
+
+type ChipProps = {
+  icon: (props: IconProps) => JSX.Element;
+  label: string;
+  available?: boolean;
+  type?: "neutral" | "green" | "blue";
+  compact?: boolean;
+};
 
 const DATA = hackathonsData as Hackathon[];
-const RATING_KEYS: (keyof Ratings)[] = ["food", "organization", "judging", "prizes", "mentorship"];
+const RATING_KEYS: (keyof Ratings)[] = [
+  "food",
+  "organization",
+  "judging",
+  "prizes",
+  "mentorship",
+];
 
-const winRate = (h: Hackathon) => (h.votes === 0 ? 0 : (h.wins / h.votes) * 100);
+const T = {
+  bg: "#0d1117",
+  bgElevated: "#161b22",
+  bgOverlay: "#1c2128",
+  bgHover: "#1f2937",
+  border: "#30363d",
+  borderMuted: "#21262d",
+  text: "#e6edf3",
+  textMuted: "#7d8590",
+  textSubtle: "#484f58",
+  green: "#2ea043",
+  greenLight: "#3fb950",
+  greenBg: "#0f2d1a",
+  greenBorder: "#196c2e",
+  blue: "#58a6ff",
+  blueBg: "#051d4d",
+  blueBorder: "#1f6feb",
+  red: "#e31e3c",
+  redBg: "#2d1316",
+  redBorder: "#6e2630",
+  orange: "#e3b341",
+};
+
+const winRate = (h: Hackathon) => (h.votes > 0 ? (h.wins / h.votes) * 100 : 0);
 const avgRating = (h: Hackathon) => Object.values(h.ratings).reduce((a, b) => a + b, 0) / 5;
 
+function ratingColor(v: number) {
+  if (v >= 4.5) return T.greenLight;
+  if (v >= 4.0) return T.blue;
+  if (v >= 3.5) return T.orange;
+  return "#f85149";
+}
+
+function shuffle<TValue>(arr: TValue[]) {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function nextPair(list: Hackathon[], exclude: number[] = []): [Hackathon, Hackathon] {
+  const pool = list.filter((h) => !exclude.includes(h.id));
+  const picked = shuffle(pool.length >= 2 ? pool : list);
+  return [picked[0], picked[1]];
+}
+
+function getInitials(name: string) {
+  return name.replace(/[^A-Z]/g, "").slice(0, 2) || name.slice(0, 2).toUpperCase();
+}
+
 const Ico = {
-  Zap: ({ s = 14 }: { s?: number }) => (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  Zap: ({ s = 14, c = "currentColor" }: IconProps) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
     </svg>
   ),
-  Check: ({ s = 14 }: { s?: number }) => (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="20 6 9 17 4 12" />
+  BarChart: ({ s = 14, c = "currentColor" }: IconProps) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="20" x2="18" y2="10" />
+      <line x1="12" y1="20" x2="12" y2="4" />
+      <line x1="6" y1="20" x2="6" y2="14" />
     </svg>
   ),
-  Home: ({ s = 11 }: { s?: number }) => (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  Home: ({ s = 12, c = "currentColor" }: IconProps) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
       <polyline points="9 22 9 12 15 12 15 22" />
     </svg>
   ),
-  Plane: ({ s = 11 }: { s?: number }) => (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  Plane: ({ s = 12, c = "currentColor" }: IconProps) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M17.8 19.2L16 11l3.5-3.5C21 6 21 4 19 4c-1 0-2 .5-2.7 1.3L13 9 4.8 6.2c-.5-.2-1.1 0-1.4.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.5-.3.7-.9.5-1.4z" />
     </svg>
   ),
-  Trophy: ({ s = 11 }: { s?: number }) => (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  Trophy: ({ s = 12, c = "currentColor" }: IconProps) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
       <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
       <path d="M4 22h16" />
@@ -69,182 +139,291 @@ const Ico = {
       <path d="M18 2H6v7a6 6 0 0 0 12 0V2z" />
     </svg>
   ),
-  Users: ({ s = 11 }: { s?: number }) => (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  Users: ({ s = 12, c = "currentColor" }: IconProps) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
       <circle cx="9" cy="7" r="4" />
       <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
       <path d="M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
   ),
-  Chevron: ({ up = false }: { up?: boolean }) => (
-    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: up ? "rotate(180deg)" : "none" }}>
+  Check: ({ s = 12, c = "currentColor" }: IconProps) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  ),
+  ChevronDown: ({ s = 14, c = "currentColor", up = false }: IconProps & { up?: boolean }) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: up ? "rotate(180deg)" : "none", transition: "transform .2s ease" }}>
       <polyline points="6 9 12 15 18 9" />
     </svg>
   ),
 };
 
-function ratingColor(v: number) {
-  if (v >= 4.5) return "#3fb950";
-  if (v >= 4.0) return "#58a6ff";
-  if (v >= 3.5) return "#e3b341";
-  return "#f85149";
-}
-
-function pickPair(list: Hackathon[], exclude: number[] = []): [Hackathon, Hackathon] {
-  const pool = list.filter((h) => !exclude.includes(h.id));
-  const usePool = pool.length >= 2 ? pool : list;
-  const shuffled = [...usePool].sort(() => Math.random() - 0.5);
-  return [shuffled[0], shuffled[1]];
-}
-
-function Avatar({ name, color = "#334155", size = 40 }: { name: string; color?: string; size?: number }) {
-  const initials = name
-    .split(" ")
-    .map((s) => s[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
+function HackAvatar({ h, size = 40 }: { h: Hackathon; size?: number }) {
+  const initials = getInitials(h.name);
 
   return (
     <div
-      className="relative flex items-center justify-center overflow-hidden rounded-lg border text-xs font-bold tracking-wide text-slate-100 shadow-[0_6px_18px_rgba(0,0,0,0.4)]"
       style={{
         width: size,
         height: size,
-        borderColor: `${color}66`,
-        background: `linear-gradient(145deg, ${color}dd, ${color}88)`,
+        borderRadius: Math.round(size * 0.24),
+        background: `linear-gradient(145deg, ${h.color}dd, ${h.color}99)`,
+        border: `1.5px solid ${h.color}66`,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        boxShadow: `0 0 0 1px ${T.border}, 0 2px 8px rgba(0,0,0,.5)`,
+        position: "relative",
+        overflow: "hidden",
+        flexShrink: 0,
       }}
     >
-      <div className="pointer-events-none absolute inset-0" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.18), transparent 58%)" }} />
-      <span className="relative z-10">{initials}</span>
+      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(145deg, rgba(255,255,255,0.18), transparent 58%)" }} />
+      <span style={{ position: "relative", color: "rgba(255,255,255,.95)", fontSize: size * 0.3, fontWeight: 700 }}>{initials}</span>
     </div>
   );
 }
 
-function PerkPill({
-  label,
-  enabled = true,
-  icon,
-  tone = "neutral",
-  compact = false,
-}: {
-  label: string;
-  enabled?: boolean;
-  icon: React.ReactNode;
-  tone?: PillTone;
-  compact?: boolean;
-}) {
-  const classes: Record<PillTone, string> = {
-    neutral: "border-slate-700 bg-slate-950 text-slate-300",
-    green: "border-emerald-700/60 bg-emerald-950/45 text-emerald-300",
-    blue: "border-blue-700/60 bg-blue-950/45 text-blue-300",
+function Chip({ icon: Icon, label, available = true, type = "neutral", compact = false }: ChipProps) {
+  const styles = {
+    green: { color: T.greenLight, bg: T.greenBg, border: T.greenBorder },
+    blue: { color: T.blue, bg: T.blueBg, border: T.blueBorder },
+    neutral: { color: T.textMuted, bg: T.bgOverlay, border: T.border },
+    off: { color: "#f85149", bg: T.redBg, border: T.redBorder },
   };
+
+  const s = available ? styles[type] : styles.off;
 
   if (compact) {
     return (
-      <span
+      <div
         title={label}
-        className={`inline-flex h-6 w-6 items-center justify-center rounded-md border ${enabled ? classes[tone] : "border-rose-900/60 bg-rose-950/35 text-rose-300/80"}`}
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: 6,
+          border: `1px solid ${s.border}`,
+          background: s.bg,
+          color: s.color,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          position: "relative",
+          opacity: available ? 1 : 0.8,
+        }}
       >
-        {icon}
-      </span>
+        <Icon s={11} c={s.color} />
+        {!available && <div style={{ position: "absolute", width: "130%", height: "1.5px", transform: "rotate(-32deg)", background: s.color, opacity: 0.7 }} />}
+      </div>
     );
   }
 
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${enabled ? classes[tone] : "border-rose-900/60 bg-rose-950/35 text-rose-300/80"}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "2px 8px",
+        borderRadius: 999,
+        border: `1px solid ${s.border}`,
+        background: s.bg,
+        color: s.color,
+        fontSize: 11,
+        position: "relative",
+        opacity: available ? 1 : 0.82,
+      }}
     >
-      {icon}
+      <Icon s={10} c={s.color} />
       {label}
+      {!available && <div style={{ position: "absolute", left: 6, right: 6, top: "50%", height: 1, transform: "translateY(-50%)", background: s.color, opacity: 0.6 }} />}
     </span>
   );
 }
 
-function VoteCard({
-  hackathon,
-  onVote,
-  state,
-  isIdle,
-}: {
-  hackathon: Hackathon;
-  onVote: (id: number) => void;
-  state: "idle" | "winner" | "loser";
-  isIdle: boolean;
-}) {
-  const winner = state === "winner";
-  const loser = state === "loser";
-  const color = hackathon.color ?? "#475569";
-  const accent = hackathon.accent ?? "#94a3b8";
+function RatingStrip({ h }: { h: Hackathon }) {
+  return (
+    <div>
+      <div style={{ display: "flex", height: 4, borderRadius: 4, overflow: "hidden", gap: 1, marginBottom: 6 }}>
+        {RATING_KEYS.map((k) => (
+          <div key={k} style={{ flex: h.ratings[k], background: ratingColor(h.ratings[k]) }} />
+        ))}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        {RATING_KEYS.map((k) => (
+          <span key={k} style={{ fontSize: 10, color: T.textSubtle }}>
+            {k === "organization" ? "org" : k === "mentorship" ? "mentor" : k} {h.ratings[k].toFixed(1)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VoteCard({ h, onVote, state, isIdle }: { h: Hackathon; onVote: (id: number) => void; state: CardState; isIdle: boolean }) {
+  const [hovered, setHovered] = useState(false);
+  const [tilt, setTilt] = useState({ x: 0, y: 0 });
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  const onMove = useCallback(
+    (e: MouseEvent<HTMLDivElement>) => {
+      if (!ref.current || !isIdle) return;
+      const r = ref.current.getBoundingClientRect();
+      setTilt({
+        x: ((e.clientY - (r.top + r.height / 2)) / (r.height / 2)) * -4,
+        y: ((e.clientX - (r.left + r.width / 2)) / (r.width / 2)) * 4,
+      });
+    },
+    [isIdle],
+  );
+
+  const isWinner = state === "winner";
+  const isLoser = state === "loser";
+
+  let transformBase = `perspective(1200px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)`;
+  if (isWinner) transformBase = "perspective(1200px) scale(1.03) translateY(-4px)";
+  if (isLoser) transformBase = "perspective(1200px) scale(.96) translateY(4px)";
+
+  const dotSvg = `<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><circle cx='2' cy='2' r='1.2' fill='${encodeURIComponent(h.accent)}' opacity='0.35'/></svg>`;
 
   return (
     <div
-      className={`group relative w-full overflow-hidden rounded-2xl border bg-slate-900/90 p-5 text-left transition-all duration-300 ${
-        winner
-          ? "border-emerald-500/60 shadow-[0_0_0_1px_rgba(46,160,67,0.35),0_16px_34px_rgba(21,128,61,0.25)]"
-          : "border-slate-800"
-      } ${
-        loser
-          ? "scale-[0.985] opacity-55"
-          : isIdle
-            ? "hover:-translate-y-0.5 hover:border-slate-600 hover:shadow-[0_12px_30px_rgba(0,0,0,0.45)]"
-            : ""
-      }`}
+      ref={ref}
+      onClick={() => isIdle && onVote(h.id)}
+      onMouseEnter={() => isIdle && setHovered(true)}
+      onMouseLeave={() => {
+        setHovered(false);
+        setTilt({ x: 0, y: 0 });
+      }}
+      onMouseMove={onMove}
+      style={{
+        flex: 1,
+        maxWidth: 360,
+        minWidth: 270,
+        background: T.bgElevated,
+        border: `1px solid ${isWinner ? T.green : hovered && isIdle ? T.border : T.borderMuted}`,
+        borderRadius: 12,
+        overflow: "hidden",
+        cursor: isIdle ? "pointer" : "default",
+        transform: `${transformBase} scale(${hovered && isIdle ? 1.01 : 1})`,
+        opacity: isLoser ? 0.38 : 1,
+        transition: "all .3s cubic-bezier(0.25,1,0.4,1)",
+        boxShadow: isWinner ? `0 0 0 1px ${T.greenBorder}, 0 8px 32px rgba(46,160,67,0.25)` : hovered && isIdle ? "0 8px 32px rgba(0,0,0,0.5)" : "none",
+      }}
     >
-      <div className="absolute inset-x-0 top-0 h-16" style={{ background: `linear-gradient(100deg, ${color}cc 0%, ${color}55 64%, ${accent}33 100%)` }} />
-      <div className="absolute inset-x-0 top-0 h-16 opacity-35" style={{ backgroundImage: `radial-gradient(${accent}99 0.9px, transparent 0.9px)`, backgroundSize: "14px 14px" }} />
-
-      <div className="relative">
-        <div className="mb-4 flex items-start gap-3">
-          <div className="mt-1">
-            <Avatar name={hackathon.name} color={hackathon.color} size={44} />
+      <div style={{ height: 56, position: "relative", overflow: "hidden", backgroundImage: `url("data:image/svg+xml,${dotSvg}"), linear-gradient(135deg, ${h.color}ee 0%, ${h.color}88 100%)` }}>
+        <div style={{ position: "absolute", inset: 0, background: `linear-gradient(90deg,transparent 40%,${h.color}22 100%)` }} />
+        <div style={{ position: "absolute", bottom: 8, right: 12, fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,.55)", letterSpacing: ".04em", textTransform: "uppercase" }}>{h.org}</div>
+        {isWinner && (
+          <div style={{ position: "absolute", inset: 0, background: "rgba(46,160,67,.18)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: T.green, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 20px ${T.green}88` }}>
+              <Ico.Check s={16} c="#fff" />
+            </div>
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-xs uppercase tracking-[0.12em] text-slate-300">{hackathon.org}</div>
-            <div className="truncate text-2xl font-semibold text-slate-100">{hackathon.name}</div>
-            <div className="truncate text-sm text-slate-300">{hackathon.city}</div>
-          </div>
-          <div className="rounded-md border border-slate-700 bg-slate-950/80 px-2 py-1 text-xs font-semibold text-slate-300">
-            {avgRating(hackathon).toFixed(2)} avg
-          </div>
-        </div>
-
-        <div className="mb-3 flex flex-wrap gap-2">
-          <PerkPill label={hackathon.prize} enabled icon={<Ico.Trophy />} tone="neutral" />
-          <PerkPill label={hackathon.size} enabled icon={<Ico.Users />} tone="neutral" />
-          <PerkPill label="Housing" enabled={Boolean(hackathon.accommodation)} icon={<Ico.Home />} tone="green" />
-          <PerkPill label="Travel" enabled={Boolean(hackathon.reimbursement)} icon={<Ico.Plane />} tone="blue" />
-        </div>
-
-        <div className="mb-4">
-          <div className="mb-1 flex gap-1">
-            {RATING_KEYS.map((k) => (
-              <div key={k} className="h-1.5 flex-1 rounded-sm" style={{ background: ratingColor(hackathon.ratings[k]) }} />
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-2 text-[10px] text-slate-500">
-            {RATING_KEYS.map((k) => (
-              <span key={k}>
-                {k.slice(0, 3)} {hackathon.ratings[k].toFixed(1)}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <button
-          disabled={!isIdle}
-          onClick={() => onVote(hackathon.id)}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-emerald-700 bg-gradient-to-b from-emerald-600 to-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition hover:border-emerald-500 hover:from-emerald-500 hover:to-emerald-600 disabled:cursor-not-allowed disabled:opacity-65"
-        >
-          <Ico.Zap s={12} /> Vote for {hackathon.name}
-        </button>
+        )}
       </div>
 
-      {winner && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-emerald-500/10">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500 text-white shadow-[0_0_20px_rgba(46,160,67,0.6)]">
-            <Ico.Check />
+      <div style={{ padding: "16px 18px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <HackAvatar h={h} size={44} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: T.text, letterSpacing: "-.02em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{h.name}</h2>
+              <span style={{ fontSize: 10, color: T.textSubtle, fontWeight: 600, background: T.bgOverlay, border: `1px solid ${T.borderMuted}`, borderRadius: 6, padding: "2px 7px" }}>{avgRating(h).toFixed(2)} avg</span>
+            </div>
+            <div style={{ marginTop: 3, fontSize: 11, color: T.textSubtle }}>{h.city}</div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <Chip icon={Ico.Trophy} label={h.prize} type="neutral" />
+          <Chip icon={Ico.Users} label={h.size} type="neutral" />
+          <Chip icon={Ico.Home} label="Housing" available={h.accommodation} type="green" />
+          <Chip icon={Ico.Plane} label="Travel" available={h.reimbursement} type="blue" />
+        </div>
+
+        <RatingStrip h={h} />
+
+        {isIdle && (
+          <button
+            style={{
+              width: "100%",
+              padding: "7px 14px",
+              borderRadius: 6,
+              border: `1px solid ${hovered ? "#3fb950" : T.greenBorder}`,
+              background: hovered ? "linear-gradient(180deg,#2ea043,#238636)" : "linear-gradient(180deg,#238636,#1c6f2a)",
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              boxShadow: hovered ? "0 0 0 3px rgba(46,160,67,.4)" : "none",
+            }}
+          >
+            <Ico.Zap s={13} c="#fff" />
+            Vote for {h.name}
+          </button>
+        )}
+
+        {isLoser && <div style={{ padding: "7px 14px", borderRadius: 6, border: `1px solid ${T.borderMuted}`, background: T.bgOverlay, color: T.textSubtle, fontSize: 12, textAlign: "center" }}>Not this time</div>}
+      </div>
+    </div>
+  );
+}
+
+function RankingRow({ h, i, expanded, onToggle }: { h: Hackathon; i: number; expanded: boolean; onToggle: () => void }) {
+  return (
+    <div style={{ borderBottom: `1px solid ${T.borderMuted}`, background: expanded ? T.bgHover : "transparent" }}>
+      <div onClick={onToggle} style={{ display: "flex", alignItems: "center", padding: "10px 16px", cursor: "pointer" }}>
+        <div style={{ width: 36, textAlign: "center", fontSize: i < 3 ? 15 : 11, color: T.textSubtle }}>{i < 3 ? ["🥇", "🥈", "🥉"][i] : i + 1}</div>
+        <div style={{ marginRight: 10 }}><HackAvatar h={h} size={30} /></div>
+
+        <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{h.name}</div>
+          <div style={{ fontSize: 10, color: T.textSubtle }}>{h.city}</div>
+        </div>
+
+        <div style={{ display: "flex", gap: 4, marginRight: 14 }}>
+          <Chip icon={Ico.Home} label="Housing" available={h.accommodation} type="green" compact />
+          <Chip icon={Ico.Plane} label="Travel" available={h.reimbursement} type="blue" compact />
+        </div>
+
+        <div style={{ width: 64, marginRight: 16, fontSize: 11, color: T.textSubtle }}>{(h.votes / 1000).toFixed(1)}k</div>
+
+        <div style={{ width: 90, marginRight: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+            <span style={{ fontSize: 9, color: T.textSubtle, textTransform: "uppercase" }}>win rate</span>
+            <span style={{ fontSize: 10.5, color: T.greenLight, fontWeight: 600 }}>{winRate(h).toFixed(1)}%</span>
+          </div>
+          <div style={{ height: 4, borderRadius: 4, background: T.bgOverlay, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${winRate(h)}%`, background: `linear-gradient(90deg,${T.green},${T.greenLight})` }} />
+          </div>
+        </div>
+
+        <Ico.ChevronDown s={14} c={T.textSubtle} up={expanded} />
+      </div>
+
+      {expanded && (
+        <div style={{ padding: "0 16px 14px", paddingLeft: 62, animation: "expandDown .22s ease" }}>
+          <div style={{ borderTop: `1px solid ${T.borderMuted}`, paddingTop: 12, display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 280 }}>
+              <div style={{ fontSize: 10, color: T.textSubtle, textTransform: "uppercase", marginBottom: 8 }}>Category Ratings</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {RATING_KEYS.map((k) => (
+                  <div key={k} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 10, width: 58, color: T.textSubtle }}>{k === "organization" ? "org" : k}</span>
+                    <div style={{ flex: 1, height: 4, borderRadius: 4, background: T.bgOverlay, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${(h.ratings[k] / 5) * 100}%`, background: ratingColor(h.ratings[k]) }} />
+                    </div>
+                    <span style={{ fontSize: 11, color: ratingColor(h.ratings[k]), width: 28, textAlign: "right" }}>{h.ratings[k]}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -253,195 +432,187 @@ function VoteCard({
 }
 
 export default function RateHackathonsPage() {
-  const [view, setView] = useState<ViewMode>("vote");
   const [hackathons, setHackathons] = useState<Hackathon[]>(DATA);
+  const [view, setView] = useState<ViewMode>("vote");
   const [pair, setPair] = useState<[Hackathon, Hackathon]>([DATA[0], DATA[1]]);
-  const [streak, setStreak] = useState(0);
-  const [myVotes, setMyVotes] = useState(0);
-  const [streakPulse, setStreakPulse] = useState(0);
-  const [phase, setPhase] = useState<"idle" | "voted">("idle");
+  const [phase, setPhase] = useState<VotePhase>("idle");
   const [votedId, setVotedId] = useState<number | null>(null);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [streak, setStreak] = useState(0);
+  const [totalVotesByYou, setTotalVotesByYou] = useState(0);
+  const [visible, setVisible] = useState(true);
+  const [expanded, setExpanded] = useState<number | null>(null);
 
   useEffect(() => {
-    setPair(pickPair(DATA));
+    setPair(nextPair(DATA));
   }, []);
 
-  const rankings = useMemo(
-    () =>
-      [...hackathons].sort((a, b) => {
-        const wr = winRate(b) - winRate(a);
-        if (wr !== 0) return wr;
-        return b.votes - a.votes;
-      }),
-    [hackathons],
+  const sorted = useMemo(() => [...hackathons].sort((a, b) => winRate(b) - winRate(a)), [hackathons]);
+
+  const handleVote = useCallback(
+    (id: number) => {
+      if (phase !== "idle") return;
+
+      setPhase("voted");
+      setVotedId(id);
+
+      setHackathons((prev) =>
+        prev.map((h) =>
+          h.id === id
+            ? { ...h, votes: h.votes + 1, wins: h.wins + 1 }
+            : pair.some((p) => p.id === h.id)
+              ? { ...h, votes: h.votes + 1 }
+              : h,
+        ),
+      );
+
+      setStreak((s) => s + 1);
+      setTotalVotesByYou((s) => s + 1);
+
+      setTimeout(() => {
+        setVisible(false);
+        setTimeout(() => {
+          setPair(nextPair(hackathons, [id]));
+          setVotedId(null);
+          setPhase("idle");
+          setVisible(true);
+        }, 320);
+      }, 950);
+    },
+    [hackathons, pair, phase],
   );
 
-  const totalVotes = useMemo(() => hackathons.reduce((sum, h) => sum + h.votes, 0), [hackathons]);
-
-  const vote = (winnerId: number) => {
-    if (phase !== "idle") return;
-    const ids = new Set(pair.map((p) => p.id));
-
-    setPhase("voted");
-    setVotedId(winnerId);
-    setHackathons((prev) =>
-      prev.map((h) => {
-        if (!ids.has(h.id)) return h;
-        if (h.id === winnerId) return { ...h, votes: h.votes + 1, wins: h.wins + 1 };
-        return { ...h, votes: h.votes + 1 };
-      }),
-    );
-
-    setStreak((s) => s + 1);
-    setMyVotes((v) => v + 1);
-    setStreakPulse((p) => p + 1);
-    setTimeout(() => {
-      setPair(pickPair(hackathons, [winnerId]));
-      setVotedId(null);
-      setPhase("idle");
-    }, 480);
-  };
-
   const skip = () => {
-    setStreak(0);
-    setPair(pickPair(hackathons));
+    if (phase !== "idle") return;
+    setVisible(false);
+    setTimeout(() => {
+      setPair(nextPair(hackathons));
+      setVisible(true);
+    }, 320);
   };
 
   return (
-    <div className="min-h-screen bg-[#0d1117] text-slate-100">
+    <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
       <style>{`
-        @keyframes floatUp { 0% { transform: translateY(0px); opacity: 0.8; } 100% { transform: translateY(-8px); opacity: 1; } }
-        @keyframes cardFade { from { opacity: 0; transform: translateY(6px);} to { opacity: 1; transform: translateY(0);} }
-        @keyframes vsPulse { 0%,100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.04); opacity: 1; } }
+        @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes expandDown{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
       `}</style>
 
-      <header className="sticky top-0 z-20 border-b border-slate-800/90 bg-[#161b22]/90 backdrop-blur">
-        <div className="mx-auto flex h-14 w-full max-w-6xl items-center px-4">
-          <div className="text-lg font-bold tracking-tight">RateHackathons</div>
-
-          <div className="ml-6 flex gap-2 text-sm">
-            <button onClick={() => setView("vote")} className={`rounded px-3 py-1 transition ${view === "vote" ? "bg-slate-700 text-white" : "text-slate-300 hover:bg-slate-800"}`}>
-              Vote
-            </button>
-            <button onClick={() => setView("rankings")} className={`rounded px-3 py-1 transition ${view === "rankings" ? "bg-slate-700 text-white" : "text-slate-300 hover:bg-slate-800"}`}>
-              Rankings
-            </button>
+      <header style={{ background: "#161b22", borderBottom: `1px solid ${T.border}`, position: "sticky", top: 0, zIndex: 100 }}>
+        <div style={{ maxWidth: 1012, margin: "0 auto", padding: "0 16px", display: "flex", alignItems: "center", height: 56, gap: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 8, background: T.red, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Ico.Zap s={15} c="#fff" />
+            </div>
+            <span style={{ fontSize: 15, fontWeight: 700 }}>RateHackathons</span>
           </div>
 
-          <div className="ml-auto flex items-center gap-3 text-xs">
-            <div key={streakPulse} style={{ animation: "floatUp 0.45s ease" }} className="rounded-full border border-orange-700/40 bg-orange-950/40 px-3 py-1 text-orange-300">
-              🔥 {streak} streak
+          <nav style={{ display: "flex", marginLeft: 4 }}>
+            {[
+              { key: "vote", label: "Vote", Icon: Ico.Zap },
+              { key: "rankings", label: "Rankings", Icon: Ico.BarChart },
+            ].map(({ key, label, Icon }) => (
+              <button
+                key={key}
+                onClick={() => setView(key as ViewMode)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  height: 56,
+                  padding: "0 14px",
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: view === key ? `2px solid ${T.red}` : "2px solid transparent",
+                  color: view === key ? T.text : T.textMuted,
+                  cursor: "pointer",
+                }}
+              >
+                <Icon s={13} c={view === key ? T.text : T.textSubtle} />
+                {label}
+              </button>
+            ))}
+          </nav>
+
+          <div style={{ flex: 1 }} />
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${T.borderMuted}`, background: T.bgOverlay, fontSize: 11, color: T.textMuted }}>
+              {hackathons.reduce((s, h) => s + h.votes, 0).toLocaleString()} votes
             </div>
-            <div className="text-slate-400">{myVotes} by you</div>
-            <div className="text-slate-400">{totalVotes.toLocaleString()} total</div>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl px-4 py-10">
+      <main style={{ maxWidth: 1012, margin: "0 auto", padding: "0 16px" }}>
         {view === "vote" ? (
-          <section style={{ animation: "cardFade 0.35s ease" }}>
-            <div className="mb-8 text-center">
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-rose-700/30 bg-rose-950/40 px-3 py-1 text-xs uppercase tracking-[0.1em] text-rose-300">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-rose-400" />
-                Hackathon Season 2026
+          <div style={{ animation: "fadeUp .35s ease" }}>
+            <div style={{ textAlign: "center", padding: "48px 0 36px" }}>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: T.redBg, border: `1px solid ${T.redBorder}`, borderRadius: 999, padding: "4px 12px", marginBottom: 16 }}>
+                <div style={{ width: 6, height: 6, borderRadius: "50%", background: T.red }} />
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#f85149", letterSpacing: ".03em", textTransform: "uppercase" }}>Hackathon Season 2026</span>
               </div>
-              <h2 className="text-4xl font-extrabold tracking-tight text-slate-100">Which hackathon deserves your weekend?</h2>
-              <p className="mt-2 text-sm text-slate-400">Head-to-head choices, community ranking. Premium UI pass v3.</p>
+              <h1 style={{ fontSize: 40, fontWeight: 800, marginBottom: 12, lineHeight: 1.1 }}>
+                Which hackathon deserves
+                <br />
+                <span style={{ color: T.green }}>your weekend?</span>
+              </h1>
+              <p style={{ fontSize: 14, color: T.textMuted, maxWidth: 420, margin: "0 auto", lineHeight: 1.6 }}>
+                Head-to-head voting builds the most trusted hackathon ranking on the internet.
+              </p>
             </div>
 
-            <div className="grid items-center gap-4 md:grid-cols-[1fr_auto_1fr]">
-              <VoteCard hackathon={pair[0]} onVote={vote} isIdle={phase === "idle"} state={votedId === pair[0].id ? "winner" : votedId !== null ? "loser" : "idle"} />
+            {streak > 0 && (
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, background: T.bgElevated, border: `1px solid ${T.border}`, borderRadius: 999, padding: "6px 14px" }}>
+                  <span>🔥</span>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>{streak}-vote streak</span>
+                  <span style={{ width: 1, height: 12, background: T.border }} />
+                  <span style={{ fontSize: 11, color: T.textSubtle }}>{totalVotesByYou} by you</span>
+                </div>
+              </div>
+            )}
 
-              <div className="mx-auto hidden md:block">
-                <div style={{ animation: "vsPulse 1.8s ease-in-out infinite" }} className="rounded-full border border-slate-700 bg-slate-900/90 px-4 py-3 text-xs font-semibold tracking-[0.2em] text-slate-400 shadow-[0_8px_18px_rgba(0,0,0,0.35)]">
-                  VS
+            <div style={{ display: "flex", gap: 16, alignItems: "stretch", justifyContent: "center", flexWrap: "wrap", opacity: visible ? 1 : 0, transform: visible ? "translateY(0)" : "translateY(-6px)", transition: "opacity .28s ease, transform .28s ease" }}>
+              <VoteCard h={pair[0]} onVote={handleVote} state={votedId === pair[0].id ? "winner" : votedId ? "loser" : "idle"} isIdle={phase === "idle"} />
+
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 0" }}>
+                <div style={{ width: 36, height: 36, borderRadius: "50%", background: T.bgElevated, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: T.textSubtle }}>
+                  vs
                 </div>
               </div>
 
-              <VoteCard hackathon={pair[1]} onVote={vote} isIdle={phase === "idle"} state={votedId === pair[1].id ? "winner" : votedId !== null ? "loser" : "idle"} />
+              <VoteCard h={pair[1]} onVote={handleVote} state={votedId === pair[1].id ? "winner" : votedId ? "loser" : "idle"} isIdle={phase === "idle"} />
             </div>
 
-            <div className="mt-5 text-center">
-              <button onClick={skip} className="rounded border border-slate-700 px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-900">
-                Skip pair
+            <div style={{ textAlign: "center", marginTop: 20, paddingBottom: 48 }}>
+              <button onClick={skip} style={{ background: "none", border: "none", cursor: "pointer", color: T.textSubtle, fontSize: 12 }}>
+                Skip this matchup
               </button>
             </div>
-          </section>
+          </div>
         ) : (
-          <section style={{ animation: "cardFade 0.35s ease" }}>
-            <div className="mb-6">
-              <h2 className="mb-2 text-3xl font-extrabold">Rankings</h2>
-              <p className="text-sm text-slate-400">Sorted by win rate, then total votes. Click a row for details.</p>
-              <div className="mt-3 flex flex-wrap gap-4 text-[11px] text-slate-500">
-                <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#3fb950]" /> ≥ 4.5</span>
-                <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#58a6ff]" /> ≥ 4.0</span>
-                <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#e3b341]" /> ≥ 3.5</span>
-              </div>
+          <div style={{ animation: "fadeUp .35s ease", paddingBottom: 48 }}>
+            <div style={{ borderBottom: `1px solid ${T.borderMuted}`, paddingBottom: 16 }}>
+              <h1 style={{ fontSize: 20, fontWeight: 700, marginTop: 28 }}>Hackathon Rankings</h1>
+              <p style={{ fontSize: 12, color: T.textSubtle }}>{hackathons.length} hackathons · ranked by community win rate · click to expand</p>
             </div>
 
-            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70">
-              <div className="grid grid-cols-[56px_44px_1fr_64px_96px_90px] border-b border-slate-800 bg-slate-950 px-4 py-2 text-xs uppercase tracking-wide text-slate-500">
-                <div>Rank</div>
-                <div />
-                <div>Hackathon</div>
-                <div className="text-center">Perks</div>
-                <div className="text-right">Votes</div>
-                <div className="text-right">Win Rate</div>
+            <div style={{ border: `1px solid ${T.border}`, borderRadius: 6, overflow: "hidden", marginTop: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", padding: "8px 16px", background: T.bgElevated, borderBottom: `1px solid ${T.border}` }}>
+                <div style={{ width: 36 }} />
+                <div style={{ width: 40, marginRight: 10 }} />
+                <div style={{ flex: 1, fontSize: 10, color: T.textSubtle, textTransform: "uppercase" }}>Hackathon</div>
+                <div style={{ width: 53, marginRight: 14, fontSize: 10, color: T.textSubtle, textTransform: "uppercase", textAlign: "center" }}>Perks</div>
+                <div style={{ width: 64, marginRight: 16, fontSize: 10, color: T.textSubtle, textTransform: "uppercase" }}>Votes</div>
+                <div style={{ width: 90, marginRight: 8, fontSize: 10, color: T.textSubtle, textTransform: "uppercase" }}>Win Rate</div>
+                <div style={{ width: 14 }} />
               </div>
 
-              {rankings.map((h, idx) => {
-                const open = expandedId === h.id;
-                return (
-                  <div key={h.id} className="border-b border-slate-800 last:border-b-0">
-                    <button
-                      onClick={() => setExpandedId(open ? null : h.id)}
-                      className="grid w-full grid-cols-[56px_44px_1fr_64px_96px_90px] items-center px-4 py-3 text-left transition hover:bg-slate-800/20"
-                    >
-                      <div className="text-sm text-slate-400">{idx < 3 ? ["🥇", "🥈", "🥉"][idx] : `#${idx + 1}`}</div>
-                      <div>
-                        <Avatar name={h.name} color={h.color} size={32} />
-                      </div>
-                      <div className="min-w-0 pl-2">
-                        <div className="truncate text-sm font-medium text-slate-100">{h.name}</div>
-                        <div className="truncate text-xs text-slate-500">{h.city}</div>
-                      </div>
-                      <div className="flex justify-center gap-1">
-                        <PerkPill label="Housing" enabled={Boolean(h.accommodation)} icon={<Ico.Home />} tone="green" compact />
-                        <PerkPill label="Travel" enabled={Boolean(h.reimbursement)} icon={<Ico.Plane />} tone="blue" compact />
-                      </div>
-                      <div className="text-right text-sm text-slate-300">{h.votes.toLocaleString()}</div>
-                      <div className="flex items-center justify-end gap-2 text-right text-sm font-medium text-emerald-400">
-                        <span>{winRate(h).toFixed(1)}%</span>
-                        <span className="text-slate-500"><Ico.Chevron up={open} /></span>
-                      </div>
-                    </button>
-
-                    {open && (
-                      <div className="border-t border-slate-800 bg-slate-950/50 px-6 py-4">
-                        <div className="mb-3 flex flex-wrap gap-2">
-                          <PerkPill label={h.prize} enabled icon={<Ico.Trophy />} tone="neutral" />
-                          <PerkPill label={h.size} enabled icon={<Ico.Users />} tone="neutral" />
-                          <PerkPill label="Housing" enabled={Boolean(h.accommodation)} icon={<Ico.Home />} tone="green" />
-                          <PerkPill label="Travel" enabled={Boolean(h.reimbursement)} icon={<Ico.Plane />} tone="blue" />
-                        </div>
-                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-                          {RATING_KEYS.map((k) => (
-                            <div key={k}>
-                              <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">{k}</div>
-                              <div className="h-1.5 rounded-sm" style={{ background: ratingColor(h.ratings[k]) }} />
-                              <div className="mt-1 text-xs text-slate-400">{h.ratings[k].toFixed(1)}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              {sorted.map((h, i) => (
+                <RankingRow key={h.id} h={h} i={i} expanded={expanded === h.id} onToggle={() => setExpanded(expanded === h.id ? null : h.id)} />
+              ))}
             </div>
-          </section>
+          </div>
         )}
       </main>
     </div>
