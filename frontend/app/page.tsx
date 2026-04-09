@@ -3,6 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import hackathonsData from "../data/hackathons.json";
 
+type Ratings = {
+  food: number;
+  organization: number;
+  judging: number;
+  prizes: number;
+  mentorship: number;
+};
+
 type Hackathon = {
   id: number;
   name: string;
@@ -14,13 +22,25 @@ type Hackathon = {
   wins: number;
   color?: string;
   accent?: string;
+  accommodation?: boolean;
+  reimbursement?: boolean;
+  ratings: Ratings;
 };
 
 type ViewMode = "vote" | "rankings";
 
 const DATA = hackathonsData as Hackathon[];
+const RATING_KEYS: (keyof Ratings)[] = ["food", "organization", "judging", "prizes", "mentorship"];
 
 const winRate = (h: Hackathon) => (h.votes === 0 ? 0 : (h.wins / h.votes) * 100);
+const avgRating = (h: Hackathon) => Object.values(h.ratings).reduce((a, b) => a + b, 0) / 5;
+
+function ratingColor(v: number) {
+  if (v >= 4.5) return "#3fb950";
+  if (v >= 4.0) return "#58a6ff";
+  if (v >= 3.5) return "#e3b341";
+  return "#f85149";
+}
 
 function pickPair(list: Hackathon[], exclude: number[] = []): [Hackathon, Hackathon] {
   const pool = list.filter((h) => !exclude.includes(h.id));
@@ -40,13 +60,20 @@ function Avatar({ name, color = "#334155" }: { name: string; color?: string }) {
   return (
     <div
       className="flex h-10 w-10 items-center justify-center rounded-lg border text-xs font-bold tracking-wide text-slate-100 shadow-[0_6px_18px_rgba(0,0,0,0.4)]"
-      style={{
-        borderColor: `${color}66`,
-        background: `linear-gradient(140deg, ${color}cc, ${color}66)`,
-      }}
+      style={{ borderColor: `${color}66`, background: `linear-gradient(140deg, ${color}cc, ${color}66)` }}
     >
       {initials}
     </div>
+  );
+}
+
+function PerkPill({ label, enabled }: { label: string; enabled: boolean }) {
+  return (
+    <span
+      className={`rounded-full border px-2 py-0.5 text-[11px] ${enabled ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-300" : "border-slate-700 bg-slate-900 text-slate-500"}`}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -79,12 +106,8 @@ function VoteCard({
             : ""
       }`}
     >
-      <div
-        className="absolute inset-x-0 top-0 h-14"
-        style={{
-          background: `linear-gradient(90deg, ${accent}bb, ${accent}33)`,
-        }}
-      />
+      <div className="absolute inset-x-0 top-0 h-14" style={{ background: `linear-gradient(90deg, ${accent}bb, ${accent}33)` }} />
+
       <div className="relative">
         <div className="mb-4 flex items-start gap-3">
           <div className="mt-1">
@@ -96,24 +119,39 @@ function VoteCard({
             <div className="truncate text-sm text-slate-300">{hackathon.city}</div>
           </div>
           <div className="rounded-md border border-emerald-700/40 bg-emerald-950/50 px-2 py-1 text-xs font-medium text-emerald-300">
-            {winRate(hackathon).toFixed(1)}%
+            {avgRating(hackathon).toFixed(2)}
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="mb-3 flex flex-wrap gap-2">
           <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-300">Prize {hackathon.prize}</span>
           <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-300">Size {hackathon.size}</span>
+          <PerkPill label="Housing" enabled={Boolean(hackathon.accommodation)} />
+          <PerkPill label="Travel" enabled={Boolean(hackathon.reimbursement)} />
         </div>
 
-        <div className="mt-4">
-          <button
-            disabled={!isIdle}
-            onClick={() => onVote(hackathon.id)}
-            className="inline-flex items-center gap-2 rounded-md border border-emerald-700 bg-gradient-to-b from-emerald-600 to-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition hover:from-emerald-500 hover:to-emerald-600 disabled:cursor-not-allowed disabled:opacity-65"
-          >
-            ⚡ Vote for {hackathon.name}
-          </button>
+        <div className="mb-4">
+          <div className="mb-1 flex gap-1">
+            {RATING_KEYS.map((k) => (
+              <div key={k} className="h-1.5 flex-1 rounded-sm" style={{ background: ratingColor(hackathon.ratings[k]) }} />
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2 text-[10px] text-slate-500">
+            {RATING_KEYS.map((k) => (
+              <span key={k}>
+                {k.slice(0, 3)} {hackathon.ratings[k].toFixed(1)}
+              </span>
+            ))}
+          </div>
         </div>
+
+        <button
+          disabled={!isIdle}
+          onClick={() => onVote(hackathon.id)}
+          className="inline-flex items-center gap-2 rounded-md border border-emerald-700 bg-gradient-to-b from-emerald-600 to-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition hover:from-emerald-500 hover:to-emerald-600 disabled:cursor-not-allowed disabled:opacity-65"
+        >
+          ⚡ Vote for {hackathon.name}
+        </button>
       </div>
     </div>
   );
@@ -128,6 +166,7 @@ export default function RateHackathonsPage() {
   const [streakPulse, setStreakPulse] = useState(0);
   const [phase, setPhase] = useState<"idle" | "voted">("idle");
   const [votedId, setVotedId] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   useEffect(() => {
     setPair(pickPair(DATA));
@@ -187,26 +226,16 @@ export default function RateHackathonsPage() {
           <div className="text-lg font-bold tracking-tight">RateHackathons</div>
 
           <div className="ml-6 flex gap-2 text-sm">
-            <button
-              onClick={() => setView("vote")}
-              className={`rounded px-3 py-1 transition ${view === "vote" ? "bg-slate-700 text-white" : "text-slate-300 hover:bg-slate-800"}`}
-            >
+            <button onClick={() => setView("vote")} className={`rounded px-3 py-1 transition ${view === "vote" ? "bg-slate-700 text-white" : "text-slate-300 hover:bg-slate-800"}`}>
               Vote
             </button>
-            <button
-              onClick={() => setView("rankings")}
-              className={`rounded px-3 py-1 transition ${view === "rankings" ? "bg-slate-700 text-white" : "text-slate-300 hover:bg-slate-800"}`}
-            >
+            <button onClick={() => setView("rankings")} className={`rounded px-3 py-1 transition ${view === "rankings" ? "bg-slate-700 text-white" : "text-slate-300 hover:bg-slate-800"}`}>
               Rankings
             </button>
           </div>
 
           <div className="ml-auto flex items-center gap-3 text-xs">
-            <div
-              key={streakPulse}
-              style={{ animation: "floatUp 0.45s ease" }}
-              className="rounded-full border border-orange-700/40 bg-orange-950/40 px-3 py-1 text-orange-300"
-            >
+            <div key={streakPulse} style={{ animation: "floatUp 0.45s ease" }} className="rounded-full border border-orange-700/40 bg-orange-950/40 px-3 py-1 text-orange-300">
               🔥 {streak} streak
             </div>
             <div className="text-slate-400">{myVotes} by you</div>
@@ -224,32 +253,19 @@ export default function RateHackathonsPage() {
                 Hackathon Season 2026
               </div>
               <h2 className="text-4xl font-extrabold tracking-tight text-slate-100">Which hackathon deserves your weekend?</h2>
-              <p className="mt-2 text-sm text-slate-400">Head-to-head voting.</p>
+              <p className="mt-2 text-sm text-slate-400">Closer to full version: perks, ratings, richer cards, and expanded rankings.</p>
             </div>
 
             <div className="grid items-center gap-4 md:grid-cols-[1fr_auto_1fr]">
-              <VoteCard
-                hackathon={pair[0]}
-                onVote={vote}
-                isIdle={phase === "idle"}
-                state={votedId === pair[0].id ? "winner" : votedId !== null ? "loser" : "idle"}
-              />
+              <VoteCard hackathon={pair[0]} onVote={vote} isIdle={phase === "idle"} state={votedId === pair[0].id ? "winner" : votedId !== null ? "loser" : "idle"} />
 
               <div className="mx-auto hidden md:block">
-                <div
-                  style={{ animation: "vsPulse 1.8s ease-in-out infinite" }}
-                  className="rounded-full border border-slate-700 bg-slate-900/90 px-4 py-3 text-xs font-semibold tracking-[0.2em] text-slate-400 shadow-[0_8px_18px_rgba(0,0,0,0.35)]"
-                >
+                <div style={{ animation: "vsPulse 1.8s ease-in-out infinite" }} className="rounded-full border border-slate-700 bg-slate-900/90 px-4 py-3 text-xs font-semibold tracking-[0.2em] text-slate-400 shadow-[0_8px_18px_rgba(0,0,0,0.35)]">
                   VS
                 </div>
               </div>
 
-              <VoteCard
-                hackathon={pair[1]}
-                onVote={vote}
-                isIdle={phase === "idle"}
-                state={votedId === pair[1].id ? "winner" : votedId !== null ? "loser" : "idle"}
-              />
+              <VoteCard hackathon={pair[1]} onVote={vote} isIdle={phase === "idle"} state={votedId === pair[1].id ? "winner" : votedId !== null ? "loser" : "idle"} />
             </div>
 
             <div className="mt-5 text-center">
@@ -262,7 +278,7 @@ export default function RateHackathonsPage() {
           <section style={{ animation: "cardFade 0.35s ease" }}>
             <div className="mb-6">
               <h2 className="mb-2 text-3xl font-extrabold">Rankings</h2>
-              <p className="text-sm text-slate-400">Sorted by win rate, then total votes.</p>
+              <p className="text-sm text-slate-400">Sorted by win rate, then total votes. Click a row for details.</p>
             </div>
 
             <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70">
@@ -274,23 +290,48 @@ export default function RateHackathonsPage() {
                 <div className="text-right">Win Rate</div>
               </div>
 
-              {rankings.map((h, idx) => (
-                <div
-                  key={h.id}
-                  className="grid grid-cols-[56px_44px_1fr_96px_90px] items-center border-b border-slate-800 px-4 py-3 last:border-b-0 hover:bg-slate-800/20"
-                >
-                  <div className="text-sm text-slate-400">#{idx + 1}</div>
-                  <div>
-                    <Avatar name={h.name} color={h.color} />
+              {rankings.map((h, idx) => {
+                const open = expandedId === h.id;
+                return (
+                  <div key={h.id} className="border-b border-slate-800 last:border-b-0">
+                    <button
+                      onClick={() => setExpandedId(open ? null : h.id)}
+                      className="grid w-full grid-cols-[56px_44px_1fr_96px_90px] items-center px-4 py-3 text-left transition hover:bg-slate-800/20"
+                    >
+                      <div className="text-sm text-slate-400">#{idx + 1}</div>
+                      <div>
+                        <Avatar name={h.name} color={h.color} />
+                      </div>
+                      <div className="min-w-0 pl-2">
+                        <div className="truncate text-sm font-medium text-slate-100">{h.name}</div>
+                        <div className="truncate text-xs text-slate-500">{h.city}</div>
+                      </div>
+                      <div className="text-right text-sm text-slate-300">{h.votes.toLocaleString()}</div>
+                      <div className="text-right text-sm font-medium text-emerald-400">{winRate(h).toFixed(1)}%</div>
+                    </button>
+
+                    {open && (
+                      <div className="border-t border-slate-800 bg-slate-950/50 px-6 py-4">
+                        <div className="mb-3 flex flex-wrap gap-2">
+                          <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs text-slate-300">Prize {h.prize}</span>
+                          <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs text-slate-300">Size {h.size}</span>
+                          <PerkPill label="Housing" enabled={Boolean(h.accommodation)} />
+                          <PerkPill label="Travel" enabled={Boolean(h.reimbursement)} />
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                          {RATING_KEYS.map((k) => (
+                            <div key={k}>
+                              <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">{k}</div>
+                              <div className="h-1.5 rounded-sm" style={{ background: ratingColor(h.ratings[k]) }} />
+                              <div className="mt-1 text-xs text-slate-400">{h.ratings[k].toFixed(1)}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="min-w-0 pl-2">
-                    <div className="truncate text-sm font-medium text-slate-100">{h.name}</div>
-                    <div className="truncate text-xs text-slate-500">{h.city}</div>
-                  </div>
-                  <div className="text-right text-sm text-slate-300">{h.votes.toLocaleString()}</div>
-                  <div className="text-right text-sm font-medium text-emerald-400">{winRate(h).toFixed(1)}%</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         )}
