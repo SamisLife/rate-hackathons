@@ -12,6 +12,8 @@ type Hackathon = {
   size: string;
   votes: number;
   wins: number;
+  color?: string;
+  accent?: string;
 };
 
 type ViewMode = "vote" | "rankings";
@@ -27,7 +29,7 @@ function pickPair(list: Hackathon[], exclude: number[] = []): [Hackathon, Hackat
   return [shuffled[0], shuffled[1]];
 }
 
-function Avatar({ name }: { name: string }) {
+function Avatar({ name, color = "#334155" }: { name: string; color?: string }) {
   const initials = name
     .split(" ")
     .map((s) => s[0])
@@ -36,28 +38,62 @@ function Avatar({ name }: { name: string }) {
     .toUpperCase();
 
   return (
-    <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-700 bg-gradient-to-br from-slate-700 to-slate-900 text-xs font-bold tracking-wide text-slate-100 shadow-[0_6px_18px_rgba(0,0,0,0.4)]">
+    <div
+      className="flex h-10 w-10 items-center justify-center rounded-lg border text-xs font-bold tracking-wide text-slate-100 shadow-[0_6px_18px_rgba(0,0,0,0.4)]"
+      style={{
+        borderColor: `${color}66`,
+        background: `linear-gradient(140deg, ${color}cc, ${color}66)`,
+      }}
+    >
       {initials}
     </div>
   );
 }
 
-function VoteCard({ hackathon, onVote }: { hackathon: Hackathon; onVote: (id: number) => void }) {
+function VoteCard({
+  hackathon,
+  onVote,
+  state,
+  isIdle,
+}: {
+  hackathon: Hackathon;
+  onVote: (id: number) => void;
+  state: "idle" | "winner" | "loser";
+  isIdle: boolean;
+}) {
+  const winner = state === "winner";
+  const loser = state === "loser";
+  const accent = hackathon.color ?? "#475569";
+
   return (
-    <button
-      onClick={() => onVote(hackathon.id)}
-      className="group relative w-full overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/90 p-5 text-left transition-all duration-300 hover:-translate-y-0.5 hover:border-slate-600 hover:shadow-[0_12px_30px_rgba(0,0,0,0.45)]"
+    <div
+      className={`group relative w-full overflow-hidden rounded-2xl border bg-slate-900/90 p-5 text-left transition-all duration-300 ${
+        winner
+          ? "border-emerald-500/60 shadow-[0_0_0_1px_rgba(46,160,67,0.35),0_16px_34px_rgba(21,128,61,0.25)]"
+          : "border-slate-800"
+      } ${
+        loser
+          ? "scale-[0.985] opacity-55"
+          : isIdle
+            ? "hover:-translate-y-0.5 hover:border-slate-600 hover:shadow-[0_12px_30px_rgba(0,0,0,0.45)]"
+            : ""
+      }`}
     >
-      <div className="absolute inset-x-0 top-0 h-14 bg-gradient-to-r from-slate-800/80 to-slate-700/30" />
+      <div
+        className="absolute inset-x-0 top-0 h-14"
+        style={{
+          background: `linear-gradient(90deg, ${accent}bb, ${accent}33)`,
+        }}
+      />
       <div className="relative">
         <div className="mb-4 flex items-start gap-3">
           <div className="mt-1">
-            <Avatar name={hackathon.name} />
+            <Avatar name={hackathon.name} color={hackathon.color} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-xs uppercase tracking-[0.12em] text-slate-400">{hackathon.org}</div>
+            <div className="text-xs uppercase tracking-[0.12em] text-slate-300">{hackathon.org}</div>
             <div className="truncate text-2xl font-semibold text-slate-100">{hackathon.name}</div>
-            <div className="truncate text-sm text-slate-400">{hackathon.city}</div>
+            <div className="truncate text-sm text-slate-300">{hackathon.city}</div>
           </div>
           <div className="rounded-md border border-emerald-700/40 bg-emerald-950/50 px-2 py-1 text-xs font-medium text-emerald-300">
             {winRate(hackathon).toFixed(1)}%
@@ -69,9 +105,17 @@ function VoteCard({ hackathon, onVote }: { hackathon: Hackathon; onVote: (id: nu
           <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-300">Size {hackathon.size}</span>
         </div>
 
-        <div className="mt-4 text-xs text-slate-500 transition-colors group-hover:text-slate-300">Vote for {hackathon.name}</div>
+        <div className="mt-4">
+          <button
+            disabled={!isIdle}
+            onClick={() => onVote(hackathon.id)}
+            className="inline-flex items-center gap-2 rounded-md border border-emerald-700 bg-gradient-to-b from-emerald-600 to-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition hover:from-emerald-500 hover:to-emerald-600 disabled:cursor-not-allowed disabled:opacity-65"
+          >
+            ⚡ Vote for {hackathon.name}
+          </button>
+        </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -82,6 +126,8 @@ export default function RateHackathonsPage() {
   const [streak, setStreak] = useState(0);
   const [myVotes, setMyVotes] = useState(0);
   const [streakPulse, setStreakPulse] = useState(0);
+  const [phase, setPhase] = useState<"idle" | "voted">("idle");
+  const [votedId, setVotedId] = useState<number | null>(null);
 
   useEffect(() => {
     setPair(pickPair(DATA));
@@ -100,8 +146,11 @@ export default function RateHackathonsPage() {
   const totalVotes = useMemo(() => hackathons.reduce((sum, h) => sum + h.votes, 0), [hackathons]);
 
   const vote = (winnerId: number) => {
+    if (phase !== "idle") return;
     const ids = new Set(pair.map((p) => p.id));
 
+    setPhase("voted");
+    setVotedId(winnerId);
     setHackathons((prev) =>
       prev.map((h) => {
         if (!ids.has(h.id)) return h;
@@ -113,7 +162,11 @@ export default function RateHackathonsPage() {
     setStreak((s) => s + 1);
     setMyVotes((v) => v + 1);
     setStreakPulse((p) => p + 1);
-    setPair(pickPair(hackathons, [winnerId]));
+    setTimeout(() => {
+      setPair(pickPair(hackathons, [winnerId]));
+      setVotedId(null);
+      setPhase("idle");
+    }, 480);
   };
 
   const skip = () => {
@@ -126,6 +179,7 @@ export default function RateHackathonsPage() {
       <style>{`
         @keyframes floatUp { 0% { transform: translateY(0px); opacity: 0.8; } 100% { transform: translateY(-8px); opacity: 1; } }
         @keyframes cardFade { from { opacity: 0; transform: translateY(6px);} to { opacity: 1; transform: translateY(0);} }
+        @keyframes vsPulse { 0%,100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.04); opacity: 1; } }
       `}</style>
 
       <header className="sticky top-0 z-20 border-b border-slate-800/90 bg-[#161b22]/90 backdrop-blur">
@@ -170,12 +224,32 @@ export default function RateHackathonsPage() {
                 Hackathon Season 2026
               </div>
               <h2 className="text-4xl font-extrabold tracking-tight text-slate-100">Which hackathon deserves your weekend?</h2>
-              <p className="mt-2 text-sm text-slate-400">Head-to-head choices, community ranking. Premium UI pass v3.</p>
+              <p className="mt-2 text-sm text-slate-400">Head-to-head voting.</p>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              <VoteCard hackathon={pair[0]} onVote={vote} />
-              <VoteCard hackathon={pair[1]} onVote={vote} />
+            <div className="grid items-center gap-4 md:grid-cols-[1fr_auto_1fr]">
+              <VoteCard
+                hackathon={pair[0]}
+                onVote={vote}
+                isIdle={phase === "idle"}
+                state={votedId === pair[0].id ? "winner" : votedId !== null ? "loser" : "idle"}
+              />
+
+              <div className="mx-auto hidden md:block">
+                <div
+                  style={{ animation: "vsPulse 1.8s ease-in-out infinite" }}
+                  className="rounded-full border border-slate-700 bg-slate-900/90 px-4 py-3 text-xs font-semibold tracking-[0.2em] text-slate-400 shadow-[0_8px_18px_rgba(0,0,0,0.35)]"
+                >
+                  VS
+                </div>
+              </div>
+
+              <VoteCard
+                hackathon={pair[1]}
+                onVote={vote}
+                isIdle={phase === "idle"}
+                state={votedId === pair[1].id ? "winner" : votedId !== null ? "loser" : "idle"}
+              />
             </div>
 
             <div className="mt-5 text-center">
@@ -207,7 +281,7 @@ export default function RateHackathonsPage() {
                 >
                   <div className="text-sm text-slate-400">#{idx + 1}</div>
                   <div>
-                    <Avatar name={h.name} />
+                    <Avatar name={h.name} color={h.color} />
                   </div>
                   <div className="min-w-0 pl-2">
                     <div className="truncate text-sm font-medium text-slate-100">{h.name}</div>
