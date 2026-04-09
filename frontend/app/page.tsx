@@ -35,6 +35,35 @@ const RATING_KEYS: (keyof Ratings)[] = ["food", "organization", "judging", "priz
 const winRate = (h: Hackathon) => (h.votes === 0 ? 0 : (h.wins / h.votes) * 100);
 const avgRating = (h: Hackathon) => Object.values(h.ratings).reduce((a, b) => a + b, 0) / 5;
 
+const Ico = {
+  Zap: ({ s = 14 }: { s?: number }) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+  ),
+  Check: ({ s = 14 }: { s?: number }) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  ),
+  Home: ({ s = 11 }: { s?: number }) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <polyline points="9 22 9 12 15 12 15 22" />
+    </svg>
+  ),
+  Plane: ({ s = 11 }: { s?: number }) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.8 19.2L16 11l3.5-3.5C21 6 21 4 19 4c-1 0-2 .5-2.7 1.3L13 9 4.8 6.2c-.5-.2-1.1 0-1.4.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.5-.3.7-.9.5-1.4z" />
+    </svg>
+  ),
+  Chevron: ({ up = false }: { up?: boolean }) => (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: up ? "rotate(180deg)" : "none" }}>
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  ),
+};
+
 function ratingColor(v: number) {
   if (v >= 4.5) return "#3fb950";
   if (v >= 4.0) return "#58a6ff";
@@ -67,11 +96,12 @@ function Avatar({ name, color = "#334155" }: { name: string; color?: string }) {
   );
 }
 
-function PerkPill({ label, enabled }: { label: string; enabled: boolean }) {
+function PerkPill({ label, enabled, icon }: { label: string; enabled: boolean; icon: React.ReactNode }) {
   return (
     <span
-      className={`rounded-full border px-2 py-0.5 text-[11px] ${enabled ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-300" : "border-slate-700 bg-slate-900 text-slate-500"}`}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${enabled ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-300" : "border-slate-700 bg-slate-900 text-slate-500"}`}
     >
+      {icon}
       {label}
     </span>
   );
@@ -126,8 +156,8 @@ function VoteCard({
         <div className="mb-3 flex flex-wrap gap-2">
           <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-300">Prize {hackathon.prize}</span>
           <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-300">Size {hackathon.size}</span>
-          <PerkPill label="Housing" enabled={Boolean(hackathon.accommodation)} />
-          <PerkPill label="Travel" enabled={Boolean(hackathon.reimbursement)} />
+          <PerkPill label="Housing" enabled={Boolean(hackathon.accommodation)} icon={<Ico.Home />} />
+          <PerkPill label="Travel" enabled={Boolean(hackathon.reimbursement)} icon={<Ico.Plane />} />
         </div>
 
         <div className="mb-4">
@@ -150,9 +180,17 @@ function VoteCard({
           onClick={() => onVote(hackathon.id)}
           className="inline-flex items-center gap-2 rounded-md border border-emerald-700 bg-gradient-to-b from-emerald-600 to-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition hover:from-emerald-500 hover:to-emerald-600 disabled:cursor-not-allowed disabled:opacity-65"
         >
-          ⚡ Vote for {hackathon.name}
+          <Ico.Zap s={12} /> Vote for {hackathon.name}
         </button>
       </div>
+
+      {winner && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-emerald-500/10">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500 text-white shadow-[0_0_20px_rgba(46,160,67,0.6)]">
+            <Ico.Check />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -279,6 +317,11 @@ export default function RateHackathonsPage() {
             <div className="mb-6">
               <h2 className="mb-2 text-3xl font-extrabold">Rankings</h2>
               <p className="text-sm text-slate-400">Sorted by win rate, then total votes. Click a row for details.</p>
+              <div className="mt-3 flex flex-wrap gap-4 text-[11px] text-slate-500">
+                <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#3fb950]" /> ≥ 4.5</span>
+                <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#58a6ff]" /> ≥ 4.0</span>
+                <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#e3b341]" /> ≥ 3.5</span>
+              </div>
             </div>
 
             <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70">
@@ -298,7 +341,7 @@ export default function RateHackathonsPage() {
                       onClick={() => setExpandedId(open ? null : h.id)}
                       className="grid w-full grid-cols-[56px_44px_1fr_96px_90px] items-center px-4 py-3 text-left transition hover:bg-slate-800/20"
                     >
-                      <div className="text-sm text-slate-400">#{idx + 1}</div>
+                      <div className="text-sm text-slate-400">{idx < 3 ? ["🥇", "🥈", "🥉"][idx] : `#${idx + 1}`}</div>
                       <div>
                         <Avatar name={h.name} color={h.color} />
                       </div>
@@ -307,7 +350,10 @@ export default function RateHackathonsPage() {
                         <div className="truncate text-xs text-slate-500">{h.city}</div>
                       </div>
                       <div className="text-right text-sm text-slate-300">{h.votes.toLocaleString()}</div>
-                      <div className="text-right text-sm font-medium text-emerald-400">{winRate(h).toFixed(1)}%</div>
+                      <div className="flex items-center justify-end gap-2 text-right text-sm font-medium text-emerald-400">
+                        <span>{winRate(h).toFixed(1)}%</span>
+                        <span className="text-slate-500"><Ico.Chevron up={open} /></span>
+                      </div>
                     </button>
 
                     {open && (
@@ -315,8 +361,8 @@ export default function RateHackathonsPage() {
                         <div className="mb-3 flex flex-wrap gap-2">
                           <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs text-slate-300">Prize {h.prize}</span>
                           <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs text-slate-300">Size {h.size}</span>
-                          <PerkPill label="Housing" enabled={Boolean(h.accommodation)} />
-                          <PerkPill label="Travel" enabled={Boolean(h.reimbursement)} />
+                          <PerkPill label="Housing" enabled={Boolean(h.accommodation)} icon={<Ico.Home />} />
+                          <PerkPill label="Travel" enabled={Boolean(h.reimbursement)} icon={<Ico.Plane />} />
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
                           {RATING_KEYS.map((k) => (
