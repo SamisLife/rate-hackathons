@@ -105,6 +105,121 @@ function getInitials(name: string) {
   return name.replace(/[^A-Z]/g, "").slice(0, 2) || name.slice(0, 2).toUpperCase();
 }
 
+function FlameStreak({ streak }: { streak: number }) {
+  const [phase, setPhase] = useState<"dormant" | "igniting" | "burning">("dormant");
+  const [displayNum, setDisplayNum] = useState(streak);
+  const [numBounce, setNumBounce] = useState(false);
+  const prevStreak = useRef(streak);
+  const burnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const numTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (streak > prevStreak.current) {
+      setPhase("igniting");
+      setNumBounce(true);
+
+      if (bounceTimer.current) clearTimeout(bounceTimer.current);
+      bounceTimer.current = setTimeout(() => setNumBounce(false), 500);
+
+      if (burnTimer.current) clearTimeout(burnTimer.current);
+      burnTimer.current = setTimeout(() => setPhase("burning"), 650);
+
+      if (numTimer.current) clearTimeout(numTimer.current);
+      numTimer.current = setTimeout(() => setDisplayNum(streak), 120);
+    }
+
+    prevStreak.current = streak;
+  }, [streak]);
+
+  useEffect(
+    () => () => {
+      if (burnTimer.current) clearTimeout(burnTimer.current);
+      if (bounceTimer.current) clearTimeout(bounceTimer.current);
+      if (numTimer.current) clearTimeout(numTimer.current);
+    },
+    [],
+  );
+
+  const isCold = phase === "dormant";
+  const isIgniting = phase === "igniting";
+  const flameColor = isCold ? "#3d444d" : isIgniting ? "#fbbf24" : "#f97316";
+  const innerColor = isCold ? "#2d333b" : isIgniting ? "#fef08a" : "#fb923c";
+  const glowSize = isCold ? "0px" : isIgniting ? "10px" : "5px";
+  const glowColor = isCold ? "transparent" : isIgniting ? "#fbbf2466" : "#f9731644";
+  const numColor = isCold ? T.textSubtle : isIgniting ? "#fef08a" : "#fdba74";
+
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "5px 10px",
+        borderRadius: 999,
+        background: isCold ? T.bgOverlay : isIgniting ? "#2d1a0a" : "#1e1208",
+        border: `1px solid ${isCold ? T.borderMuted : isIgniting ? "#854d0e55" : "#78350f44"}`,
+        transition: "background 0.6s ease, border-color 0.6s ease",
+      }}
+    >
+      <div
+        style={{
+          position: "relative",
+          width: 16,
+          height: 20,
+          flexShrink: 0,
+          animation:
+            isIgniting
+              ? "flameIgnite 0.65s cubic-bezier(0.34,1.56,0.64,1) forwards"
+              : phase === "burning"
+                ? "flameBurn 2.4s ease-in-out infinite"
+                : "none",
+          transformOrigin: "50% 90%",
+          filter: `drop-shadow(0 0 ${glowSize} ${glowColor})`,
+          transition: "filter 0.4s ease",
+        }}
+      >
+        <svg width="16" height="20" viewBox="0 0 16 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path
+            d="M8 1C8 1 12.5 5.5 12 10.5C11.8 8.5 10.5 7.5 10.5 7.5C10.5 7.5 12 11 10 14C10 11.5 8.5 10.5 8.5 10.5C8.5 10.5 9 13 7.5 15.5C6 13 6.5 10.5 6.5 10.5C6.5 10.5 5 11.5 5 14C3 11 4.5 7.5 4.5 7.5C4.5 7.5 3.2 8.5 3 10.5C2.5 5.5 7 1 8 1Z"
+            fill={flameColor}
+            style={{ transition: "fill 0.45s ease" }}
+          />
+          <path
+            d="M8 8C8 8 10 10.5 9.5 13C9.3 11.5 8.5 11 8.5 11C8.5 11 9 13 7.8 15C6.6 13 7.2 11 7.2 11C7.2 11 6.5 11.5 6.3 13C5.8 10.5 7.5 8 8 8Z"
+            fill={innerColor}
+            style={{ transition: "fill 0.35s ease" }}
+          />
+          <circle
+            cx="8"
+            cy="17.5"
+            r="1.5"
+            fill={isCold ? "#2d333b" : "#f97316"}
+            opacity={isCold ? 0.3 : 0.6}
+            style={{ transition: "fill 0.5s ease, opacity 0.5s ease" }}
+          />
+        </svg>
+      </div>
+
+      <span
+        style={{
+          fontSize: 12,
+          fontWeight: 700,
+          color: numColor,
+          letterSpacing: "-0.02em",
+          animation: numBounce ? "numPop 0.45s cubic-bezier(0.34,1.56,0.64,1) forwards" : "none",
+          display: "inline-block",
+          transition: "color 0.45s ease",
+          minWidth: 14,
+          textAlign: "center",
+        }}
+      >
+        {displayNum}
+      </span>
+    </div>
+  );
+}
+
 const Ico = {
   Zap: ({ s = 14, c = "currentColor" }: IconProps) => (
     <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -145,6 +260,11 @@ const Ico = {
       <circle cx="9" cy="7" r="4" />
       <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
       <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  ),
+  Star: ({ s = 12, c = "currentColor" }: IconProps) => (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
     </svg>
   ),
   Check: ({ s = 12, c = "currentColor" }: IconProps) => (
@@ -408,7 +528,7 @@ function RankingRow({ h, i, expanded, onToggle }: { h: Hackathon; i: number; exp
       </div>
 
       {expanded && (
-        <div style={{ padding: "0 16px 14px", paddingLeft: 62, animation: "expandDown .22s ease" }}>
+        <div style={{ padding: "0 16px 14px", paddingLeft: 62, animation: "rh-expand-down .22s ease" }}>
           <div style={{ borderTop: `1px solid ${T.borderMuted}`, paddingTop: 12, display: "flex", gap: 12, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 280 }}>
               <div style={{ fontSize: 10, color: T.textSubtle, textTransform: "uppercase", marginBottom: 8 }}>Category Ratings</div>
@@ -438,7 +558,6 @@ export default function RateHackathonsPage() {
   const [phase, setPhase] = useState<VotePhase>("idle");
   const [votedId, setVotedId] = useState<number | null>(null);
   const [streak, setStreak] = useState(0);
-  const [totalVotesByYou, setTotalVotesByYou] = useState(0);
   const [visible, setVisible] = useState(true);
   const [expanded, setExpanded] = useState<number | null>(null);
 
@@ -466,7 +585,6 @@ export default function RateHackathonsPage() {
       );
 
       setStreak((s) => s + 1);
-      setTotalVotesByYou((s) => s + 1);
 
       setTimeout(() => {
         setVisible(false);
@@ -492,11 +610,6 @@ export default function RateHackathonsPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
-      <style>{`
-        @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes expandDown{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
-      `}</style>
-
       <header style={{ background: "#161b22", borderBottom: `1px solid ${T.border}`, position: "sticky", top: 0, zIndex: 100 }}>
         <div style={{ maxWidth: 1012, margin: "0 auto", padding: "0 16px", display: "flex", alignItems: "center", height: 56, gap: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -537,7 +650,10 @@ export default function RateHackathonsPage() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${T.borderMuted}`, background: T.bgOverlay, fontSize: 11, color: T.textMuted }}>
-              {hackathons.reduce((s, h) => s + h.votes, 0).toLocaleString()} votes
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <Ico.Star s={11} c={T.textSubtle} />
+                {hackathons.reduce((s, h) => s + h.votes, 0).toLocaleString()} votes
+              </span>
             </div>
           </div>
         </div>
@@ -545,7 +661,7 @@ export default function RateHackathonsPage() {
 
       <main style={{ maxWidth: 1012, margin: "0 auto", padding: "0 16px" }}>
         {view === "vote" ? (
-          <div style={{ animation: "fadeUp .35s ease" }}>
+          <div className="rh-fade-up" style={{ animation: "rh-fade-up .35s ease" }}>
             <div style={{ textAlign: "center", padding: "48px 0 36px" }}>
               <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: T.redBg, border: `1px solid ${T.redBorder}`, borderRadius: 999, padding: "4px 12px", marginBottom: 16 }}>
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: T.red }} />
@@ -561,21 +677,14 @@ export default function RateHackathonsPage() {
               </p>
             </div>
 
-            {streak > 0 && (
-              <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, background: T.bgElevated, border: `1px solid ${T.border}`, borderRadius: 999, padding: "6px 14px" }}>
-                  <span>🔥</span>
-                  <span style={{ fontSize: 12, fontWeight: 600 }}>{streak}-vote streak</span>
-                  <span style={{ width: 1, height: 12, background: T.border }} />
-                  <span style={{ fontSize: 11, color: T.textSubtle }}>{totalVotesByYou} by you</span>
-                </div>
-              </div>
-            )}
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+              <FlameStreak streak={streak} />
+            </div>
 
             <div style={{ display: "flex", gap: 16, alignItems: "stretch", justifyContent: "center", flexWrap: "wrap", opacity: visible ? 1 : 0, transform: visible ? "translateY(0)" : "translateY(-6px)", transition: "opacity .28s ease, transform .28s ease" }}>
               <VoteCard h={pair[0]} onVote={handleVote} state={votedId === pair[0].id ? "winner" : votedId ? "loser" : "idle"} isIdle={phase === "idle"} />
 
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 0" }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: "20px 0" }}>
                 <div style={{ width: 36, height: 36, borderRadius: "50%", background: T.bgElevated, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: T.textSubtle }}>
                   vs
                 </div>
@@ -591,7 +700,7 @@ export default function RateHackathonsPage() {
             </div>
           </div>
         ) : (
-          <div style={{ animation: "fadeUp .35s ease", paddingBottom: 48 }}>
+          <div className="rh-fade-up" style={{ animation: "rh-fade-up .35s ease", paddingBottom: 48 }}>
             <div style={{ borderBottom: `1px solid ${T.borderMuted}`, paddingBottom: 16 }}>
               <h1 style={{ fontSize: 20, fontWeight: 700, marginTop: 28 }}>Hackathon Rankings</h1>
               <p style={{ fontSize: 12, color: T.textSubtle }}>{hackathons.length} hackathons · ranked by community win rate · click to expand</p>
