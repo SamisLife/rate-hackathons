@@ -220,6 +220,289 @@ function FlameStreak({ streak }: { streak: number }) {
   );
 }
 
+function DevpostButton({ linked, onClick }: { linked: boolean; onClick: () => void }) {
+  const [hovered, setHovered] = useState(false);
+  const teal = "#00B4D8";
+  const tealDk = "#003E54";
+  const tealMd = "#005F73";
+
+  return (
+    <button
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={onClick}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 7,
+        padding: "0 12px",
+        height: 30,
+        borderRadius: 6,
+        border: linked ? `1px solid ${tealMd}` : hovered ? `1px solid ${teal}55` : `1px solid ${tealDk}`,
+        background: linked
+          ? `linear-gradient(180deg, ${tealDk}ee, ${tealDk}cc)`
+          : hovered
+            ? `linear-gradient(180deg, ${tealDk}cc, ${tealDk}aa)`
+            : `linear-gradient(180deg, ${tealDk}99, ${tealDk}77)`,
+        cursor: "pointer",
+        transition: "all 0.18s ease",
+        boxShadow: linked
+          ? `0 0 0 3px ${teal}22, inset 0 1px 0 rgba(255,255,255,0.06)`
+          : hovered
+            ? `0 0 0 2px ${teal}18, inset 0 1px 0 rgba(255,255,255,0.04)`
+            : `inset 0 1px 0 rgba(255,255,255,0.04)`,
+        flexShrink: 0,
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      {hovered && !linked && (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: "-100%",
+            width: "60%",
+            height: "100%",
+            background: "linear-gradient(90deg,transparent,rgba(0,180,216,0.08),transparent)",
+            animation: "devpostShimmer 0.6s ease forwards",
+            pointerEvents: "none",
+          }}
+        />
+      )}
+
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="24" height="24" rx="5" fill={linked ? teal : hovered ? `${teal}cc` : `${teal}88`} style={{ transition: "fill 0.18s ease" }} />
+        <path d="M7 6h4.5C14.5 6 17 8.5 17 12s-2.5 6-5.5 6H7V6zm2.5 9.5H11c1.8 0 3-1.2 3-3.5s-1.2-3.5-3-3.5H9.5v7z" fill="white" />
+      </svg>
+
+      <span style={{ fontSize: 12, fontWeight: 600, color: linked ? "#e0f7fc" : hovered ? `${teal}ee` : `${teal}99`, letterSpacing: "-0.01em", transition: "color 0.18s ease", whiteSpace: "nowrap" }}>
+        {linked ? "Devpost Linked" : "Link Devpost"}
+      </span>
+    </button>
+  );
+}
+
+type ChallengeResponse = {
+  username: string;
+  phrase: string;
+  expires_at: string;
+};
+
+type VerifyResponse = {
+  verified: boolean;
+  username: string;
+  reason?: string;
+};
+
+function DevpostLinkModal({
+  open,
+  onClose,
+  onLinked,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onLinked: (username: string) => void;
+}) {
+  const [username, setUsername] = useState("");
+  const [challenge, setChallenge] = useState<ChallengeResponse | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [loadingChallenge, setLoadingChallenge] = useState(false);
+  const [loadingVerify, setLoadingVerify] = useState(false);
+  const [error, setError] = useState("");
+  const [verifyReason, setVerifyReason] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [verified, setVerified] = useState(false);
+
+  const API_BASE = "http://localhost:8080";
+
+  const computeSecondsLeft = useCallback((expiresAt: string) => Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000)), []);
+
+  useEffect(() => {
+    if (!open || !challenge) return;
+    setSecondsLeft(computeSecondsLeft(challenge.expires_at));
+    const timer = setInterval(() => {
+      setSecondsLeft(computeSecondsLeft(challenge.expires_at));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [challenge, computeSecondsLeft, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setError("");
+    setVerifyReason("");
+    setCopied(false);
+    setVerified(false);
+  }, [open]);
+
+  const expired = secondsLeft !== null && secondsLeft <= 0;
+
+  const startChallenge = useCallback(
+    async (nameFromButton?: string) => {
+      const name = (nameFromButton ?? username).trim();
+      if (!name) {
+        setError("Please enter your Devpost username.");
+        return;
+      }
+
+      try {
+        setLoadingChallenge(true);
+        setError("");
+        setVerifyReason("");
+        setVerified(false);
+
+        const res = await fetch(`${API_BASE}/challenge`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: name }),
+        });
+
+        if (!res.ok) {
+          throw new Error(`Failed to generate challenge (${res.status})`);
+        }
+
+        const data = (await res.json()) as ChallengeResponse;
+        setUsername(data.username);
+        setChallenge(data);
+        setSecondsLeft(computeSecondsLeft(data.expires_at));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not generate challenge.");
+      } finally {
+        setLoadingChallenge(false);
+      }
+    },
+    [computeSecondsLeft, username],
+  );
+
+  const verify = useCallback(async () => {
+    if (!username.trim()) return;
+    try {
+      setLoadingVerify(true);
+      setError("");
+      setVerifyReason("");
+
+      const res = await fetch(`${API_BASE}/verify?username=${encodeURIComponent(username.trim())}`);
+      if (!res.ok) {
+        throw new Error(`Verification failed (${res.status})`);
+      }
+
+      const data = (await res.json()) as VerifyResponse;
+      if (data.verified) {
+        setVerified(true);
+        onLinked(data.username);
+      } else {
+        setVerifyReason(data.reason ?? "Not verified yet.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not verify yet.");
+    } finally {
+      setLoadingVerify(false);
+    }
+  }, [onLinked, username]);
+
+  const copyPhrase = useCallback(async () => {
+    if (!challenge?.phrase) return;
+    try {
+      await navigator.clipboard.writeText(challenge.phrase);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setError("Could not copy. Please copy manually.");
+    }
+  }, [challenge?.phrase]);
+
+  const formatTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+  if (!open) return null;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ width: "100%", maxWidth: 560, borderRadius: 14, border: `1px solid ${T.border}`, background: T.bgElevated, boxShadow: "0 20px 55px rgba(0,0,0,0.45)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: `1px solid ${T.borderMuted}` }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>Link your Devpost</div>
+            <div style={{ fontSize: 12, color: T.textSubtle }}>Verify ownership with a temporary phrase</div>
+          </div>
+          <button onClick={onClose} style={{ border: "none", background: "transparent", color: T.textSubtle, cursor: "pointer", fontSize: 20, lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          {!challenge && (
+            <>
+              <label style={{ fontSize: 12, color: T.textMuted }}>Devpost username</label>
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="jdoe"
+                style={{ height: 38, borderRadius: 8, border: `1px solid ${T.border}`, background: T.bgOverlay, color: T.text, padding: "0 12px", outline: "none" }}
+              />
+              <button
+                onClick={() => startChallenge()}
+                disabled={loadingChallenge}
+                style={{ height: 36, borderRadius: 8, border: `1px solid ${T.blueBorder}`, background: "linear-gradient(180deg,#1f6feb,#1158c7)", color: "white", fontWeight: 600, cursor: "pointer", opacity: loadingChallenge ? 0.75 : 1 }}
+              >
+                {loadingChallenge ? "Generating..." : "Generate challenge phrase"}
+              </button>
+            </>
+          )}
+
+          {challenge && !verified && (
+            <>
+              <div style={{ fontSize: 12, color: T.textMuted }}>
+                Add this phrase to your Devpost bio for <strong>{username}</strong>.
+              </div>
+              <div style={{ borderRadius: 10, border: `1px solid ${T.border}`, background: T.bgOverlay, padding: "10px 12px" }}>
+                <div style={{ fontSize: 12, color: T.textSubtle, marginBottom: 6 }}>Challenge phrase</div>
+                <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.02em" }}>{challenge.phrase}</div>
+              </div>
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={copyPhrase} style={{ flex: 1, height: 34, borderRadius: 8, border: `1px solid ${T.border}`, background: T.bgOverlay, color: T.text, cursor: "pointer" }}>
+                  {copied ? "Copied!" : "Copy phrase"}
+                </button>
+                <div style={{ minWidth: 110, height: 34, borderRadius: 8, border: `1px solid ${expired ? T.redBorder : T.border}`, background: expired ? T.redBg : T.bgOverlay, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: expired ? "#fca5a5" : T.textMuted }}>
+                  {secondsLeft === null ? "--:--" : expired ? "Expired" : formatTime(secondsLeft)}
+                </div>
+              </div>
+
+              <div style={{ fontSize: 12, color: T.textSubtle, lineHeight: 1.5 }}>
+                1) Paste phrase in your Devpost bio. 2) Save profile. 3) Come back and verify.
+              </div>
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={verify}
+                  disabled={loadingVerify || expired}
+                  style={{ flex: 1, height: 36, borderRadius: 8, border: `1px solid ${T.greenBorder}`, background: "linear-gradient(180deg,#238636,#1c6f2a)", color: "white", fontWeight: 600, cursor: "pointer", opacity: loadingVerify || expired ? 0.65 : 1 }}
+                >
+                  {loadingVerify ? "Checking..." : "I updated my bio"}
+                </button>
+                <button
+                  onClick={() => startChallenge(username)}
+                  disabled={loadingChallenge}
+                  style={{ flex: 1, height: 36, borderRadius: 8, border: `1px solid ${T.border}`, background: T.bgOverlay, color: T.text, cursor: "pointer", opacity: loadingChallenge ? 0.65 : 1 }}
+                >
+                  {loadingChallenge ? "Generating..." : "Generate new challenge"}
+                </button>
+              </div>
+            </>
+          )}
+
+          {verified && (
+            <div style={{ borderRadius: 10, border: `1px solid ${T.greenBorder}`, background: T.greenBg, padding: 14, color: "#86efac" }}>
+              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Devpost linked successfully</div>
+              <div style={{ fontSize: 12 }}>You are verified as @{username}. You can close this window.</div>
+            </div>
+          )}
+
+          {verifyReason && !verified && <div style={{ fontSize: 12, color: "#fca5a5" }}>Not verified yet: {verifyReason}</div>}
+          {error && <div style={{ fontSize: 12, color: "#fca5a5" }}>{error}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const Ico = {
   Zap: ({ s = 14, c = "currentColor" }: IconProps) => (
     <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -560,6 +843,8 @@ export default function RateHackathonsPage() {
   const [streak, setStreak] = useState(0);
   const [visible, setVisible] = useState(true);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [devpostModalOpen, setDevpostModalOpen] = useState(false);
+  const [devpostLinkedUser, setDevpostLinkedUser] = useState<string | null>(null);
 
   useEffect(() => {
     setPair(nextPair(DATA));
@@ -648,16 +933,23 @@ export default function RateHackathonsPage() {
 
           <div style={{ flex: 1 }} />
 
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${T.borderMuted}`, background: T.bgOverlay, fontSize: 11, color: T.textMuted }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 <Ico.Star s={11} c={T.textSubtle} />
                 {hackathons.reduce((s, h) => s + h.votes, 0).toLocaleString()} votes
               </span>
             </div>
+            <DevpostButton linked={Boolean(devpostLinkedUser)} onClick={() => setDevpostModalOpen(true)} />
           </div>
         </div>
       </header>
+
+      <DevpostLinkModal
+        open={devpostModalOpen}
+        onClose={() => setDevpostModalOpen(false)}
+        onLinked={(username) => setDevpostLinkedUser(username)}
+      />
 
       <main style={{ maxWidth: 1012, margin: "0 auto", padding: "0 16px" }}>
         {view === "vote" ? (
