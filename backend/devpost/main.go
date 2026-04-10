@@ -377,11 +377,132 @@ func verifyHandler(w http.ResponseWriter, r *http.Request) {
 
 
 
+// ── Hackathon scraper ─────────────────────────────────────────────────────────
+
+type ScrapedHackathon struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	URL          string `json:"url"`
+	ImageURL     string `json:"imageUrl"`
+	ImageAlt     string `json:"imageAlt"`
+	Location     string `json:"location"`
+	Description  string `json:"description"`
+	Prize        string `json:"prize"`
+	DateRange    string `json:"dateRange"`
+	Participants string `json:"participants"`
+}
+
+func scrapeUserHackathons(devpostUsername string) ([]ScrapedHackathon, error) {
+	targetURL := "https://devpost.com/" + strings.TrimPrefix(devpostUsername, "@") + "/challenges"
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	req, err := http.NewRequest("GET", targetURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; HackRank/1.0)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch challenges page: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("devpost returned status %d", resp.StatusCode)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	var hackathons []ScrapedHackathon
+
+	doc.Find("article.challenge-listing").Each(func(_ int, article *goquery.Selection) {
+		h := ScrapedHackathon{}
+		h.ID, _ = article.Attr("data-id")
+
+		link := article.Find("a.clearfix").First()
+		h.URL, _ = link.Attr("href")
+
+		img := article.Find("img.thumbnail_image").First()
+		src, _ := img.Attr("src")
+		if strings.HasPrefix(src, "//") {
+			src = "https:" + src
+		}
+		h.ImageURL = src
+		h.ImageAlt, _ = img.Attr("alt")
+
+		h.Name = strings.TrimSpace(article.Find("h2.title").First().Text())
+
+		locSel := article.Find("p.challenge-location").First().Clone()
+		locSel.Find("i").Remove()
+		h.Location = strings.TrimSpace(locSel.Text())
+
+		h.Description = strings.TrimSpace(article.Find("p.challenge-description").First().Text())
+
+		article.Find("ul.no-bullet li").Each(func(_ int, li *goquery.Selection) {
+			icon := li.Find("i").First()
+			cls, _ := icon.Attr("class")
+
+			if li.HasClass("stat") {
+				content := strings.Join(strings.Fields(li.Find(".stat-content").Text()), " ")
+				if strings.Contains(cls, "fa-trophy") {
+					h.Prize = content
+				} else if strings.Contains(cls, "fa-clock") {
+					h.DateRange = content
+				}
+			} else if strings.Contains(cls, "fa-user-friends") {
+				value := strings.TrimSpace(li.Find(".value").Text())
+				action := strings.TrimSpace(li.Find(".action").Text())
+				h.Participants = strings.Join(strings.Fields(value+" "+action), " ")
+			}
+		})
+
+		if h.Name != "" {
+			hackathons = append(hackathons, h)
+		}
+	})
+
+	if hackathons == nil {
+		hackathons = []ScrapedHackathon{}
+	}
+	return hackathons, nil
+}
+
+// GET /hackathons?username=<devpost_username>
+func hackathonsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "use GET"})
+		return
+	}
+
+	username := strings.TrimSpace(r.URL.Query().Get("username"))
+	if username == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing username query param"})
+		return
+	}
+
+	hackathons, err := scrapeUserHackathons(username)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"username":   username,
+		"hackathons": hackathons,
+	})
+}
+
 func main() {
 	http.HandleFunc("/health", withCORS(healthHandler))
 	http.HandleFunc("/bio", withCORS(bioHandler))
 	http.HandleFunc("/challenge", withCORS(challengeHandler))
 	http.HandleFunc("/verify", withCORS(verifyHandler))
+	http.HandleFunc("/hackathons", withCORS(hackathonsHandler))
 
 	fmt.Println("Server running on http://localhost:8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {

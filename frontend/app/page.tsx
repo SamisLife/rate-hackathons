@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useRouter } from "next/navigation";
 import hackathonsData from "../data/hackathons.json";
 
 type Ratings = {
@@ -764,9 +765,7 @@ function DevpostLinkModal({
 
                 <button
                   onClick={() => { setLoginError(""); setStage("login"); }}
-                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: T.textMuted, padding: "2px 0", alignSelf: "center", transition: "color 0.15s" }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = T.blue; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = T.textMuted; }}
+                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: T.textMuted, padding: "2px 0", alignSelf: "center" }}
                 >
                   Already have an account? <span style={{ color: T.blue, fontWeight: 600 }}>Sign in</span>
                 </button>
@@ -1553,6 +1552,7 @@ function ProfileDropdown({
   onSignOut: () => void;
   onClose: () => void;
 }) {
+  const router = useRouter();
   const initials = account.username.slice(0, 2).toUpperCase();
 
   return (
@@ -1711,7 +1711,7 @@ function ProfileDropdown({
               </svg>
             }
             label="Your profile"
-            onClick={onClose}
+            onClick={() => { onClose(); router.push(`/profile/${account.username}`); }}
           />
           <DropdownItem
             icon={
@@ -1795,8 +1795,22 @@ export default function RateHackathonsPage() {
   const [devpostModalOpen, setDevpostModalOpen] = useState(false);
   const [account, setAccount] = useState<AccountUser | null>(null);
 
+  const saveAccount = (user: AccountUser | null) => {
+    setAccount(user);
+    if (user) localStorage.setItem("rh_account", JSON.stringify(user));
+    else localStorage.removeItem("rh_account");
+  };
+
   useEffect(() => {
     setPair(nextPair(DATA));
+  }, []);
+
+  // Restore session from localStorage after hydration (client-only)
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("rh_account");
+      if (stored) setAccount(JSON.parse(stored) as AccountUser);
+    } catch { /* ignore */ }
   }, []);
 
   const sorted = useMemo(() => [...hackathons].sort((a, b) => winRate(b) - winRate(a)), [hackathons]);
@@ -1890,7 +1904,7 @@ export default function RateHackathonsPage() {
               </span>
             </div>
             {account
-              ? <ProfileButton account={account} votes={streak} onSignOut={() => setAccount(null)} />
+              ? <ProfileButton account={account} votes={streak} onSignOut={() => saveAccount(null)} />
               : <DevpostButton linked={false} onClick={() => setDevpostModalOpen(true)} />
             }
           </div>
@@ -1900,7 +1914,7 @@ export default function RateHackathonsPage() {
       <DevpostLinkModal
         open={devpostModalOpen}
         onClose={() => setDevpostModalOpen(false)}
-        onLinked={(user) => { setAccount(user); setDevpostModalOpen(false); }}
+        onLinked={(user) => { saveAccount(user); setDevpostModalOpen(false); }}
       />
 
       <main style={{ maxWidth: 1012, margin: "0 auto", padding: "0 16px" }}>
