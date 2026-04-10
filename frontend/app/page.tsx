@@ -424,7 +424,7 @@ function DevpostLinkModal({
   onClose: () => void;
   onLinked: (username: string, token: string) => void;
 }) {
-  type Stage = "input" | "challenge" | "success";
+  type Stage = "input" | "challenge" | "success" | "registered";
 
   const [stage, setStage] = useState<Stage>("input");
   const [username, setUsername] = useState("");
@@ -435,10 +435,17 @@ function DevpostLinkModal({
   const [error, setError] = useState("");
   const [verifyMsg, setVerifyMsg] = useState("");
   const [copied, setCopied] = useState(false);
-  const [token, setToken] = useState("");
-  const [tokenCopied, setTokenCopied] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
 
+  const [token, setToken] = useState("");
+  const [signupUsername, setSignupUsername] = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
+  const [signupConfirm, setSignupConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [loadingSignup, setLoadingSignup] = useState(false);
+  const [signupError, setSignupError] = useState("");
+  const [createdUser, setCreatedUser] = useState<string>("");
+
+  const inputRef = useRef<HTMLInputElement>(null);
   const API_BASE = "http://localhost:8080";
 
   const handleClose = () => {
@@ -450,7 +457,12 @@ function DevpostLinkModal({
     setVerifyMsg("");
     setCopied(false);
     setToken("");
-    setTokenCopied(false);
+    setSignupUsername("");
+    setSignupPassword("");
+    setSignupConfirm("");
+    setSignupError("");
+    setCreatedUser("");
+    setShowPassword(false);
     onClose();
   };
 
@@ -465,9 +477,8 @@ function DevpostLinkModal({
   useEffect(() => {
     if (!challenge || stage !== "challenge") return undefined;
 
-    const tick = () => {
+    const tick = () =>
       setSecondsLeft(Math.max(0, Math.floor((new Date(challenge.expires_at).getTime() - Date.now()) / 1000)));
-    };
 
     tick();
     const id = setInterval(tick, 1000);
@@ -475,6 +486,9 @@ function DevpostLinkModal({
   }, [challenge, stage]);
 
   const expired = secondsLeft !== null && secondsLeft <= 0;
+  const formatTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+  const maskedToken = token ? `${token.slice(0, 8)}${"·".repeat(18)}${token.slice(-6)}` : "";
 
   const startChallenge = async (name = username.trim()) => {
     if (!name) {
@@ -492,7 +506,6 @@ function DevpostLinkModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: name }),
       });
-
       if (!res.ok) throw new Error(`Server error (${res.status})`);
 
       const data = (await res.json()) as ChallengeResponse;
@@ -519,6 +532,7 @@ function DevpostLinkModal({
       if (data.verified) {
         const newToken = generatePlatformToken(data.username);
         setToken(newToken);
+        setSignupUsername(data.username.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32));
         setStage("success");
         onLinked(data.username, newToken);
       } else {
@@ -533,7 +547,6 @@ function DevpostLinkModal({
 
   const copyPhrase = async () => {
     if (!challenge?.phrase) return;
-
     try {
       await navigator.clipboard.writeText(challenge.phrase);
       setCopied(true);
@@ -543,61 +556,77 @@ function DevpostLinkModal({
     }
   };
 
-  const copyToken = async () => {
+  const handleSignup = async () => {
+    setSignupError("");
+
+    if (!signupUsername.trim()) {
+      setSignupError("Choose a username.");
+      return;
+    }
+    if (signupPassword.length < 8) {
+      setSignupError("Password must be at least 8 characters.");
+      return;
+    }
+    if (signupPassword !== signupConfirm) {
+      setSignupError("Passwords don't match.");
+      return;
+    }
+
+    setLoadingSignup(true);
     try {
-      await navigator.clipboard.writeText(token);
-      setTokenCopied(true);
-      setTimeout(() => setTokenCopied(false), 1400);
-    } catch {
-      setError("Copy failed.");
+      const res = await fetch("/api/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, username: signupUsername.trim(), password: signupPassword }),
+      });
+
+      const data = (await res.json()) as { ok?: boolean; user?: { username: string }; error?: string };
+
+      if (!res.ok || !data.ok) {
+        setSignupError(data.error ?? `Server error (${res.status})`);
+        return;
+      }
+
+      setCreatedUser(data.user?.username ?? signupUsername.trim());
+      setStage("registered");
+    } catch (err) {
+      setSignupError(err instanceof Error ? err.message : "Signup failed.");
+    } finally {
+      setLoadingSignup(false);
     }
   };
 
-  const formatTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-
   if (!open) return null;
 
-  const stepsDone = stage === "success" ? [1, 2, 3] : stage === "challenge" ? [1] : [];
+  const stepsDone = stage === "success" || stage === "registered" ? [1, 2, 3] : stage === "challenge" ? [1] : [];
   const stepsActive = stage === "challenge" ? 2 : stage === "input" ? 1 : 3;
+
+  const passwordStrength = signupPassword.length >= 16 ? 3 : signupPassword.length >= 10 ? 2 : signupPassword.length > 0 ? 1 : 0;
+  const passwordLabels = ["", "Weak", "Fair", "Strong"];
+  const passwordColors = ["", "#f85149", T.orange, T.greenLight];
 
   return (
     <>
       <style>{`
-        @keyframes dp-shimmer { from { left: -100%; } to { left: 160%; } }
-        @keyframes dp-check-in { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
-        @keyframes dp-modal-in { from { opacity: 0; transform: translateY(14px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
-        @keyframes dp-fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes dp-token-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes dp-shimmer { from{left:-100%} to{left:160%} }
+        @keyframes dp-check-in { from{opacity:0;transform:scale(0.6)} to{opacity:1;transform:scale(1)} }
+        @keyframes dp-modal-in { from{opacity:0;transform:translateY(14px) scale(0.97)} to{opacity:1;transform:translateY(0) scale(1)} }
+        @keyframes dp-fade-in { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
         @keyframes dp-success-ring {
           0% { box-shadow: 0 0 0 0 #23863640; }
           70% { box-shadow: 0 0 0 10px #23863600; }
           100% { box-shadow: 0 0 0 0 #23863600; }
         }
+        @keyframes dp-registered-ring {
+          0% { box-shadow: 0 0 0 0 #1f6feb40; }
+          70% { box-shadow: 0 0 0 12px #1f6feb00; }
+          100% { box-shadow: 0 0 0 0 #1f6feb00; }
+        }
       `}</style>
 
-      <div
-        onClick={handleClose}
-        style={{
-          position: "fixed",
-          inset: 0,
-          zIndex: 140,
-          background: "rgba(1,4,9,0.72)",
-          backdropFilter: "blur(5px)",
-        }}
-      />
+      <div onClick={handleClose} style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(1,4,9,0.72)", backdropFilter: "blur(5px)" }} />
 
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          zIndex: 141,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 16,
-          pointerEvents: "none",
-        }}
-      >
+      <div style={{ position: "fixed", inset: 0, zIndex: 141, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, pointerEvents: "none" }}>
         <div
           onClick={(e) => e.stopPropagation()}
           style={{
@@ -606,22 +635,13 @@ function DevpostLinkModal({
             borderRadius: 14,
             border: `1px solid ${T.border}`,
             background: T.bgElevated,
-            boxShadow: "0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)",
+            boxShadow: "0 24px 64px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.04)",
             animation: "dp-modal-in 0.28s cubic-bezier(0.25,1,0.4,1) forwards",
             pointerEvents: "all",
             overflow: "hidden",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "14px 16px",
-              borderBottom: `1px solid ${T.borderMuted}`,
-              background: T.bgOverlay,
-            }}
-          >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: `1px solid ${T.borderMuted}`, background: T.bgOverlay }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <DevpostMark size={22} />
               <div>
@@ -631,21 +651,7 @@ function DevpostLinkModal({
             </div>
             <button
               onClick={handleClose}
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 6,
-                border: `1px solid ${T.borderMuted}`,
-                background: "transparent",
-                color: T.textMuted,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 16,
-                lineHeight: 1,
-                transition: "background 0.15s, color 0.15s",
-              }}
+              style={{ width: 28, height: 28, borderRadius: 6, border: `1px solid ${T.borderMuted}`, background: "transparent", color: T.textMuted, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, lineHeight: 1, transition: "background 0.15s,color 0.15s" }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = T.bgHover;
                 e.currentTarget.style.color = T.text;
@@ -662,67 +668,20 @@ function DevpostLinkModal({
           <div style={{ padding: "20px 20px 22px", display: "flex", flexDirection: "column", gap: 18 }}>
             {stage === "input" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 14, animation: "dp-fade-in 0.25s ease" }}>
-                <div
-                  style={{
-                    borderRadius: 10,
-                    border: "1px solid #003E54",
-                    background: "#001e2b",
-                    padding: "12px 14px",
-                    display: "flex",
-                    gap: 12,
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: 8,
-                      background: "#00B4D815",
-                      border: "1px solid #00B4D830",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
+                <div style={{ borderRadius: 10, border: "1px solid #003E54", background: "#001e2b", padding: "12px 14px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: "#00B4D815", border: "1px solid #00B4D830", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <DevpostMark size={18} />
                   </div>
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: T.text, marginBottom: 3 }}>How it works</div>
-                    <div style={{ fontSize: 11, color: T.textSubtle, lineHeight: 1.6 }}>
-                      We'll give you a short phrase. Paste it into your Devpost bio, then come back and hit verify. Takes 30
-                      seconds.
-                    </div>
+                    <div style={{ fontSize: 11, color: T.textSubtle, lineHeight: 1.6 }}>We'll give you a short phrase. Paste it into your Devpost bio, then come back and hit verify. Takes 30 seconds.</div>
                   </div>
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  <label
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: T.textMuted,
-                      letterSpacing: "0.03em",
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Devpost username
-                  </label>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, letterSpacing: "0.03em", textTransform: "uppercase" }}>Devpost username</label>
                   <div style={{ position: "relative" }}>
-                    <span
-                      style={{
-                        position: "absolute",
-                        left: 12,
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        fontSize: 12,
-                        color: T.textSubtle,
-                        pointerEvents: "none",
-                      }}
-                    >
-                      devpost.com/
-                    </span>
+                    <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: T.textSubtle, pointerEvents: "none" }}>devpost.com/</span>
                     <input
                       ref={inputRef}
                       value={username}
@@ -732,18 +691,7 @@ function DevpostLinkModal({
                       }}
                       onKeyDown={(e) => e.key === "Enter" && startChallenge()}
                       placeholder="jdoe"
-                      style={{
-                        width: "100%",
-                        height: 38,
-                        borderRadius: 8,
-                        border: `1px solid ${error ? T.redBorder : T.border}`,
-                        background: T.bg,
-                        color: T.text,
-                        fontSize: 13,
-                        padding: "0 12px 0 96px",
-                        outline: "none",
-                        transition: "border-color 0.15s",
-                      }}
+                      style={{ width: "100%", height: 38, borderRadius: 8, border: `1px solid ${error ? T.redBorder : T.border}`, background: T.bg, color: T.text, fontSize: 13, padding: "0 12px 0 96px", outline: "none", transition: "border-color 0.15s" }}
                       onFocus={(e) => {
                         e.currentTarget.style.borderColor = T.blueBorder;
                         e.currentTarget.style.boxShadow = `0 0 0 3px ${T.blueBorder}33`;
@@ -759,22 +707,7 @@ function DevpostLinkModal({
                 <button
                   onClick={() => startChallenge()}
                   disabled={loadingChallenge || !username.trim()}
-                  style={{
-                    height: 38,
-                    borderRadius: 8,
-                    border: `1px solid ${T.blueBorder}`,
-                    background: "linear-gradient(180deg,#1f6feb,#1158c7)",
-                    color: "#fff",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: loadingChallenge || !username.trim() ? "not-allowed" : "pointer",
-                    opacity: loadingChallenge || !username.trim() ? 0.65 : 1,
-                    transition: "opacity 0.15s",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 7,
-                  }}
+                  style={{ height: 38, borderRadius: 8, border: `1px solid ${T.blueBorder}`, background: "linear-gradient(180deg,#1f6feb,#1158c7)", color: "#fff", fontSize: 13, fontWeight: 600, cursor: loadingChallenge || !username.trim() ? "not-allowed" : "pointer", opacity: loadingChallenge || !username.trim() ? 0.65 : 1, transition: "opacity 0.15s", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
                 >
                   {loadingChallenge ? (
                     <>
@@ -794,124 +727,32 @@ function DevpostLinkModal({
                   <div style={{ width: 1, height: 10, background: T.borderMuted, marginLeft: 11 }} />
                   <StepRow n={2} done={stepsDone.includes(2)} active={stepsActive === 2} label="Paste it in your Devpost bio" sub="devpost.com/settings → Bio → Save" />
                   <div style={{ width: 1, height: 10, background: T.borderMuted, marginLeft: 11 }} />
-                  <StepRow n={3} done={stepsDone.includes(3)} active={stepsActive === 3} label="Verify & receive your signup token" />
+                  <StepRow n={3} done={stepsDone.includes(3)} active={stepsActive === 3} label="Verify & create your account" />
                 </div>
 
-                <div
-                  style={{
-                    borderRadius: 10,
-                    border: `1px solid ${T.border}`,
-                    background: T.bg,
-                    overflow: "hidden",
-                  }}
-                >
-                  <div
-                    style={{
-                      padding: "8px 12px",
-                      borderBottom: `1px solid ${T.borderMuted}`,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 600,
-                        color: T.textSubtle,
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                      }}
-                    >
-                      Verification phrase
-                    </span>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11,
-                        fontWeight: 600,
-                        color: expired ? "#f85149" : secondsLeft !== null && secondsLeft < 60 ? T.orange : T.textSubtle,
-                        background: expired ? T.redBg : T.bgOverlay,
-                        border: `1px solid ${expired ? T.redBorder : T.borderMuted}`,
-                        borderRadius: 6,
-                        padding: "2px 8px",
-                        transition: "color 0.3s, background 0.3s",
-                      }}
-                    >
-                      <svg
-                        width="9"
-                        height="9"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                      >
-                        <circle cx="12" cy="12" r="10" />
-                        <polyline points="12 6 12 12 16 14" />
-                      </svg>
+                <div style={{ borderRadius: 10, border: `1px solid ${T.border}`, background: T.bg, overflow: "hidden" }}>
+                  <div style={{ padding: "8px 12px", borderBottom: `1px solid ${T.borderMuted}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: T.textSubtle, textTransform: "uppercase", letterSpacing: "0.05em" }}>Verification phrase</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: expired ? "#f85149" : secondsLeft !== null && secondsLeft < 60 ? T.orange : T.textSubtle, background: expired ? T.redBg : T.bgOverlay, border: `1px solid ${expired ? T.redBorder : T.borderMuted}`, borderRadius: 6, padding: "2px 8px", transition: "color 0.3s,background 0.3s" }}>
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
                       {secondsLeft === null ? "--:--" : expired ? "Expired" : formatTime(secondsLeft)}
                     </div>
                   </div>
-
                   <div style={{ padding: "14px 16px", cursor: "pointer" }} onClick={copyPhrase} title="Click to copy">
-                    <div
-                      style={{
-                        fontSize: 18,
-                        fontWeight: 700,
-                        color: T.text,
-                        letterSpacing: "0.025em",
-                        lineHeight: 1.5,
-                        fontFamily: "monospace",
-                      }}
-                    >
-                      {challenge.phrase}
-                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: T.text, letterSpacing: "0.025em", lineHeight: 1.5, fontFamily: "monospace" }}>{challenge.phrase}</div>
                   </div>
-
-                  <div
-                    style={{
-                      padding: "8px 12px",
-                      borderTop: `1px solid ${T.borderMuted}`,
-                      display: "flex",
-                      gap: 8,
-                    }}
-                  >
+                  <div style={{ padding: "8px 12px", borderTop: `1px solid ${T.borderMuted}`, display: "flex", gap: 8 }}>
                     <button
                       onClick={copyPhrase}
-                      style={{
-                        flex: 1,
-                        height: 30,
-                        borderRadius: 6,
-                        border: `1px solid ${copied ? T.greenBorder : T.border}`,
-                        background: copied ? T.greenBg : T.bgOverlay,
-                        color: copied ? T.greenLight : T.textMuted,
-                        fontSize: 11,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 5,
-                        transition: "all 0.2s ease",
-                      }}
+                      style={{ flex: 1, height: 30, borderRadius: 6, border: `1px solid ${copied ? T.greenBorder : T.border}`, background: copied ? T.greenBg : T.bgOverlay, color: copied ? T.greenLight : T.textMuted, fontSize: 11, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, transition: "all 0.2s ease" }}
                     >
                       {copied ? (
                         <>
-                          <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                            <polyline points="2 6 5 9 10 3" stroke={T.greenLight} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>{" "}
-                          Copied
+                          <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><polyline points="2 6 5 9 10 3" stroke={T.greenLight} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg> Copied
                         </>
                       ) : (
                         <>
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                            <rect x="9" y="9" width="13" height="13" rx="2" />
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                          </svg>{" "}
-                          Copy phrase
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg> Copy phrase
                         </>
                       )}
                     </button>
@@ -919,22 +760,7 @@ function DevpostLinkModal({
                       href="https://devpost.com/settings#custom-profiles"
                       target="_blank"
                       rel="noreferrer"
-                      style={{
-                        flex: 1,
-                        height: 30,
-                        borderRadius: 6,
-                        border: "1px solid #003E54",
-                        background: "#001e2b",
-                        color: "#00B4D8aa",
-                        fontSize: 11,
-                        fontWeight: 600,
-                        textDecoration: "none",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 5,
-                        transition: "color 0.15s, border-color 0.15s",
-                      }}
+                      style={{ flex: 1, height: 30, borderRadius: 6, border: "1px solid #003E54", background: "#001e2b", color: "#00B4D8aa", fontSize: 11, fontWeight: 600, textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, transition: "color 0.15s,border-color 0.15s" }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.color = "#00B4D8";
                         e.currentTarget.style.borderColor = "#005F73";
@@ -944,8 +770,7 @@ function DevpostLinkModal({
                         e.currentTarget.style.borderColor = "#003E54";
                       }}
                     >
-                      <DevpostMark size={11} />
-                      Open Devpost ↗
+                      <DevpostMark size={11} /> Open Devpost ↗
                     </a>
                   </div>
                 </div>
@@ -954,23 +779,7 @@ function DevpostLinkModal({
                   <button
                     onClick={verify}
                     disabled={loadingVerify || expired}
-                    style={{
-                      flex: 2,
-                      height: 38,
-                      borderRadius: 8,
-                      border: `1px solid ${T.greenBorder}`,
-                      background: "linear-gradient(180deg,#238636,#1c6f2a)",
-                      color: "#fff",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: loadingVerify || expired ? "not-allowed" : "pointer",
-                      opacity: loadingVerify || expired ? 0.65 : 1,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 7,
-                      transition: "opacity 0.15s",
-                    }}
+                    style={{ flex: 2, height: 38, borderRadius: 8, border: `1px solid ${T.greenBorder}`, background: "linear-gradient(180deg,#238636,#1c6f2a)", color: "#fff", fontSize: 13, fontWeight: 600, cursor: loadingVerify || expired ? "not-allowed" : "pointer", opacity: loadingVerify || expired ? 0.65 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, transition: "opacity 0.15s" }}
                   >
                     {loadingVerify ? (
                       <>
@@ -983,53 +792,15 @@ function DevpostLinkModal({
                   <button
                     onClick={() => startChallenge(username)}
                     disabled={loadingChallenge}
-                    style={{
-                      flex: 1,
-                      height: 38,
-                      borderRadius: 8,
-                      border: `1px solid ${T.border}`,
-                      background: T.bgOverlay,
-                      color: T.textMuted,
-                      fontSize: 12,
-                      fontWeight: 500,
-                      cursor: loadingChallenge ? "not-allowed" : "pointer",
-                      opacity: loadingChallenge ? 0.65 : 1,
-                      transition: "opacity 0.15s",
-                    }}
+                    style={{ flex: 1, height: 38, borderRadius: 8, border: `1px solid ${T.border}`, background: T.bgOverlay, color: T.textMuted, fontSize: 12, fontWeight: 500, cursor: loadingChallenge ? "not-allowed" : "pointer", opacity: loadingChallenge ? 0.65 : 1, transition: "opacity 0.15s" }}
                   >
                     {loadingChallenge ? "…" : "New phrase"}
                   </button>
                 </div>
 
                 {verifyMsg && !error && (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 8,
-                      padding: "10px 12px",
-                      borderRadius: 8,
-                      background: "#2d1f09",
-                      border: "1px solid #6e4d14",
-                      fontSize: 12,
-                      color: T.orange,
-                      animation: "dp-fade-in 0.2s ease",
-                    }}
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      style={{ flexShrink: 0, marginTop: 1 }}
-                    >
-                      <circle cx="12" cy="12" r="10" />
-                      <line x1="12" y1="8" x2="12" y2="12" />
-                      <line x1="12" y1="16" x2="12.01" y2="16" />
-                    </svg>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", borderRadius: 8, background: "#2d1f09", border: "1px solid #6e4d14", fontSize: 12, color: T.orange, animation: "dp-fade-in 0.2s ease" }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
                     <span>{verifyMsg} Make sure you saved your Devpost profile.</span>
                   </div>
                 )}
@@ -1038,208 +809,179 @@ function DevpostLinkModal({
 
             {stage === "success" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 16, animation: "dp-fade-in 0.3s ease" }}>
-                <div
-                  style={{
-                    borderRadius: 12,
-                    border: `1px solid ${T.greenBorder}`,
-                    background: `linear-gradient(135deg, ${T.greenBg}, #0a1f0f)`,
-                    padding: "18px 16px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 14,
-                    animation: "dp-success-ring 0.8s ease",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: "50%",
-                      flexShrink: 0,
-                      background: `linear-gradient(135deg, ${T.green}, ${T.greenLight})`,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      boxShadow: `0 0 0 8px ${T.green}22`,
-                    }}
-                  >
-                    <svg
-                      width="20"
-                      height="20"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="#fff"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
+                <div style={{ borderRadius: 12, border: `1px solid ${T.greenBorder}`, background: `linear-gradient(135deg,${T.greenBg},#0a1f0f)`, padding: "14px 16px", display: "flex", alignItems: "center", gap: 14, animation: "dp-success-ring 0.8s ease" }}>
+                  <div style={{ width: 40, height: 40, borderRadius: "50%", flexShrink: 0, background: `linear-gradient(135deg,${T.green},${T.greenLight})`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 0 8px ${T.green}22` }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                   </div>
                   <div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: T.greenLight, marginBottom: 3 }}>Verified as @{username}</div>
-                    <div style={{ fontSize: 11, color: "#86efac", lineHeight: 1.5 }}>Your Devpost is now linked to HackRank.</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: T.greenLight, marginBottom: 2 }}>Devpost verified — @{username}</div>
+                    <div style={{ fontSize: 11, color: "#86efac", lineHeight: 1.4 }}>Now create your HackRank account below.</div>
                   </div>
                 </div>
 
-                <div style={{ animation: "dp-token-in 0.35s 0.1s ease both" }}>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: T.textSubtle,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                      marginBottom: 8,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                      <rect x="3" y="11" width="18" height="11" rx="2" />
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                    </svg>
-                    Your signup token
+                <div style={{ borderRadius: 8, border: `1px solid ${T.borderMuted}`, background: T.bg, padding: "9px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 7, background: T.bgOverlay, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={T.textSubtle} strokeWidth="2" strokeLinecap="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 9, fontWeight: 600, color: T.textSubtle, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>Verified token</div>
+                    <div style={{ fontSize: 11, fontFamily: "monospace", color: T.textSubtle, letterSpacing: "0.04em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maskedToken}</div>
+                  </div>
+                  <div style={{ fontSize: 9, fontWeight: 600, color: T.greenLight, background: T.greenBg, border: `1px solid ${T.greenBorder}`, borderRadius: 20, padding: "2px 8px", flexShrink: 0, whiteSpace: "nowrap" }}>✓ valid</div>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ flex: 1, height: 1, background: T.borderMuted }} />
+                  <span style={{ fontSize: 10, color: T.textSubtle, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" }}>Create your account</span>
+                  <div style={{ flex: 1, height: 1, background: T.borderMuted }} />
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, letterSpacing: "0.03em", textTransform: "uppercase" }}>Username</label>
+                    <input
+                      value={signupUsername}
+                      onChange={(e) => {
+                        setSignupUsername(e.target.value);
+                        setSignupError("");
+                      }}
+                      placeholder="your-handle"
+                      maxLength={32}
+                      style={{ height: 36, borderRadius: 8, border: `1px solid ${T.border}`, background: T.bg, color: T.text, fontSize: 13, padding: "0 12px", outline: "none", transition: "border-color 0.15s,box-shadow 0.15s", width: "100%" }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = T.blueBorder;
+                        e.currentTarget.style.boxShadow = `0 0 0 3px ${T.blueBorder}28`;
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = T.border;
+                        e.currentTarget.style.boxShadow = "none";
+                      }}
+                    />
                   </div>
 
-                  <div
-                    style={{
-                      borderRadius: 10,
-                      border: `1px solid ${T.border}`,
-                      background: T.bg,
-                      overflow: "hidden",
-                    }}
-                  >
-                    <div style={{ padding: "12px 14px" }}>
-                      <div
-                        style={{
-                          fontSize: 10.5,
-                          fontFamily: "monospace",
-                          color: T.textMuted,
-                          wordBreak: "break-all",
-                          lineHeight: 1.7,
-                          userSelect: "all",
-                        }}
-                      >
-                        {token}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 5 }}>
+                      <label style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, letterSpacing: "0.03em", textTransform: "uppercase" }}>Password</label>
+                      <div style={{ position: "relative" }}>
+                        <input
+                          type={showPassword ? "text" : "password"}
+                          value={signupPassword}
+                          onChange={(e) => {
+                            setSignupPassword(e.target.value);
+                            setSignupError("");
+                          }}
+                          placeholder="min. 8 chars"
+                          style={{ height: 36, borderRadius: 8, border: `1px solid ${T.border}`, background: T.bg, color: T.text, fontSize: 13, padding: "0 36px 0 12px", outline: "none", transition: "border-color 0.15s,box-shadow 0.15s", width: "100%" }}
+                          onFocus={(e) => {
+                            e.currentTarget.style.borderColor = T.blueBorder;
+                            e.currentTarget.style.boxShadow = `0 0 0 3px ${T.blueBorder}28`;
+                          }}
+                          onBlur={(e) => {
+                            e.currentTarget.style.borderColor = T.border;
+                            e.currentTarget.style.boxShadow = "none";
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword((v) => !v)}
+                          style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: T.textSubtle, padding: 2, display: "flex", alignItems: "center" }}
+                        >
+                          {showPassword ? (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                          ) : (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                          )}
+                        </button>
                       </div>
                     </div>
-                    <div
-                      style={{
-                        borderTop: `1px solid ${T.borderMuted}`,
-                        padding: "8px 12px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span style={{ fontSize: 11, color: T.textSubtle }}>Use this token to create your HackRank account</span>
-                      <button
-                        onClick={copyToken}
-                        style={{
-                          height: 26,
-                          padding: "0 10px",
-                          borderRadius: 6,
-                          border: `1px solid ${tokenCopied ? T.greenBorder : T.border}`,
-                          background: tokenCopied ? T.greenBg : T.bgOverlay,
-                          color: tokenCopied ? T.greenLight : T.textMuted,
-                          fontSize: 11,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 5,
-                          transition: "all 0.2s ease",
-                          flexShrink: 0,
+
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 5 }}>
+                      <label style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, letterSpacing: "0.03em", textTransform: "uppercase" }}>Confirm</label>
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        value={signupConfirm}
+                        onChange={(e) => {
+                          setSignupConfirm(e.target.value);
+                          setSignupError("");
                         }}
-                      >
-                        {tokenCopied ? (
-                          <>
-                            <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-                              <polyline points="2 6 5 9 10 3" stroke={T.greenLight} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>{" "}
-                            Copied
-                          </>
-                        ) : (
-                          "Copy token"
-                        )}
-                      </button>
+                        placeholder="repeat password"
+                        style={{ height: 36, borderRadius: 8, border: `1px solid ${signupConfirm && signupConfirm !== signupPassword ? T.redBorder : T.border}`, background: T.bg, color: T.text, fontSize: 13, padding: "0 12px", outline: "none", transition: "border-color 0.15s,box-shadow 0.15s", width: "100%" }}
+                        onFocus={(e) => {
+                          e.currentTarget.style.borderColor = T.blueBorder;
+                          e.currentTarget.style.boxShadow = `0 0 0 3px ${T.blueBorder}28`;
+                        }}
+                        onBlur={(e) => {
+                          e.currentTarget.style.borderColor = signupConfirm && signupConfirm !== signupPassword ? T.redBorder : T.border;
+                          e.currentTarget.style.boxShadow = "none";
+                        }}
+                      />
                     </div>
                   </div>
 
-                  <div
-                    style={{
-                      marginTop: 8,
-                      padding: "8px 10px",
-                      borderRadius: 8,
-                      background: T.bgOverlay,
-                      border: `1px solid ${T.borderMuted}`,
-                      fontSize: 11,
-                      color: T.textSubtle,
-                      lineHeight: 1.5,
-                      display: "flex",
-                      gap: 7,
-                      alignItems: "flex-start",
-                    }}
+                  {passwordStrength > 0 && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ flex: 1, display: "flex", gap: 3, height: 3 }}>
+                        {[1, 2, 3].map((n) => (
+                          <div key={n} style={{ flex: 1, height: "100%", borderRadius: 2, background: n <= passwordStrength ? passwordColors[passwordStrength] : T.bgOverlay, transition: "background 0.3s" }} />
+                        ))}
+                      </div>
+                      <span style={{ fontSize: 10, color: passwordColors[passwordStrength], fontWeight: 600, minWidth: 36 }}>{passwordLabels[passwordStrength]}</span>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleSignup}
+                    disabled={loadingSignup || !signupUsername.trim() || !signupPassword || !signupConfirm || signupPassword !== signupConfirm || signupPassword.length < 8}
+                    style={{ height: 38, borderRadius: 8, border: `1px solid ${T.blueBorder}`, background: "linear-gradient(180deg,#1f6feb,#1158c7)", color: "#fff", fontSize: 13, fontWeight: 600, cursor: loadingSignup || !signupUsername.trim() || !signupPassword || !signupConfirm || signupPassword !== signupConfirm || signupPassword.length < 8 ? "not-allowed" : "pointer", opacity: loadingSignup || !signupUsername.trim() || !signupPassword || !signupConfirm || signupPassword !== signupConfirm || signupPassword.length < 8 ? 0.65 : 1, transition: "opacity 0.15s", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 2 }}
                   >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke={T.textSubtle}
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      style={{ flexShrink: 0, marginTop: 1 }}
-                    >
-                      <circle cx="12" cy="12" r="10" />
-                      <line x1="12" y1="8" x2="12" y2="12" />
-                      <line x1="12" y1="16" x2="12.01" y2="16" />
-                    </svg>
-                    Keep this token safe. It expires and can only be used once. Your backend should exchange it for a real session
-                    after verifying the included <code style={{ background: T.bgHover, padding: "0 4px", borderRadius: 3 }}>jti</code>.
+                    {loadingSignup ? (
+                      <>
+                        <Spinner color="#fff" /> Creating account…
+                      </>
+                    ) : (
+                      "Create account →"
+                    )}
+                  </button>
+
+                  {signupError && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 8, background: T.redBg, border: `1px solid ${T.redBorder}`, fontSize: 12, color: "#fca5a5", animation: "dp-fade-in 0.2s ease" }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fca5a5" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+                      {signupError}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {stage === "registered" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16, animation: "dp-fade-in 0.3s ease" }}>
+                <div style={{ borderRadius: 14, border: `1px solid ${T.blueBorder}`, background: "linear-gradient(135deg,#051d4d,#03112e)", padding: "24px 20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14, textAlign: "center", animation: "dp-registered-ring 0.9s ease" }}>
+                  <div style={{ width: 52, height: 52, borderRadius: "50%", background: "linear-gradient(135deg,#1f6feb,#388bfd)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 0 10px #1f6feb22" }}>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 17, fontWeight: 800, color: T.text, letterSpacing: "-0.03em", marginBottom: 6 }}>Welcome, @{createdUser}</div>
+                    <div style={{ fontSize: 12, color: T.textMuted, lineHeight: 1.6, maxWidth: 300, margin: "0 auto" }}>
+                      Your HackRank account is live and linked to Devpost <span style={{ color: "#00B4D8" }}>@{username}</span>. You're all set.
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, background: T.bgOverlay, border: `1px solid ${T.border}`, borderRadius: 20, padding: "5px 14px" }}>
+                    <DevpostMark size={13} />
+                    <span style={{ fontSize: 11, color: T.textSubtle }}>@{username}</span>
+                    <span style={{ fontSize: 11, color: T.textSubtle, margin: "0 4px" }}>·</span>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.textSubtle} strokeWidth="2" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>
+                    <span style={{ fontSize: 11, color: T.greenLight, fontWeight: 600 }}>Verified</span>
                   </div>
                 </div>
-
-                <button
-                  onClick={handleClose}
-                  style={{
-                    height: 36,
-                    borderRadius: 8,
-                    border: `1px solid ${T.border}`,
-                    background: T.bgOverlay,
-                    color: T.textMuted,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
-                >
+                <button onClick={handleClose} style={{ height: 36, borderRadius: 8, border: `1px solid ${T.border}`, background: T.bgOverlay, color: T.textMuted, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                   Close
                 </button>
               </div>
             )}
 
             {error && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "9px 12px",
-                  borderRadius: 8,
-                  background: T.redBg,
-                  border: `1px solid ${T.redBorder}`,
-                  fontSize: 12,
-                  color: "#fca5a5",
-                  animation: "dp-fade-in 0.2s ease",
-                }}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fca5a5" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 8, background: T.redBg, border: `1px solid ${T.redBorder}`, fontSize: 12, color: "#fca5a5", animation: "dp-fade-in 0.2s ease" }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fca5a5" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
                 {error}
               </div>
             )}
