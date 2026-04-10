@@ -220,11 +220,120 @@ function FlameStreak({ streak }: { streak: number }) {
   );
 }
 
+function DevpostMark({ size = 14, opacity = 1 }: { size?: number; opacity?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{ opacity, flexShrink: 0 }}
+    >
+      <rect width="24" height="24" rx="5" fill="#003E54" />
+      <rect width="24" height="24" rx="5" fill="url(#dp-grad)" />
+      <path
+        d="M7 6h4.5C14.5 6 17 8.5 17 12s-2.5 6-5.5 6H7V6zm2.5 9.5H11c1.8 0 3-1.2 3-3.5s-1.2-3.5-3-3.5H9.5v7z"
+        fill="white"
+      />
+      <defs>
+        <linearGradient id="dp-grad" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#00B4D8" stopOpacity="0.9" />
+          <stop offset="100%" stopColor="#003E54" stopOpacity="1" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
+
+function StepDot({ n, active, done }: { n: number; active: boolean; done: boolean }) {
+  const bg = done ? "#238636" : active ? "#1f6feb" : T.bgOverlay;
+  const border = done ? T.greenBorder : active ? T.blueBorder : T.border;
+  const color = done || active ? "#fff" : T.textSubtle;
+  return (
+    <div
+      style={{
+        width: 22,
+        height: 22,
+        borderRadius: "50%",
+        background: bg,
+        border: `1px solid ${border}`,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 10,
+        fontWeight: 700,
+        color,
+        flexShrink: 0,
+        transition: "background 0.25s ease, border-color 0.25s ease",
+      }}
+    >
+      {done ? (
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+          <polyline points="2 6 5 9 10 3" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : (
+        n
+      )}
+    </div>
+  );
+}
+
+function StepRow({
+  n,
+  active,
+  done,
+  label,
+  sub,
+}: {
+  n: number;
+  active: boolean;
+  done: boolean;
+  label: string;
+  sub?: string;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+      <StepDot n={n} active={active} done={done} />
+      <div style={{ paddingTop: 2 }}>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: active ? T.text : done ? T.textMuted : T.textSubtle,
+            transition: "color 0.2s",
+          }}
+        >
+          {label}
+        </div>
+        {sub && (
+          <div style={{ fontSize: 11, color: T.textSubtle, marginTop: 1, lineHeight: 1.4 }}>
+            {sub}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function generatePlatformToken(username: string): string {
+  const payload = {
+    sub: username,
+    iat: Math.floor(Date.now() / 1000),
+    jti: crypto.randomUUID(),
+    iss: "hackrank",
+  };
+
+  const b64 = (value: string) => btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+  const header = b64(JSON.stringify({ alg: "none", typ: "HR1" }));
+  const body = b64(JSON.stringify(payload));
+  const nonce = b64(String.fromCharCode(...Array.from(crypto.getRandomValues(new Uint8Array(16)))));
+
+  return `hr1.${header}.${body}.${nonce}`;
+}
+
 function DevpostButton({ linked, onClick }: { linked: boolean; onClick: () => void }) {
   const [hovered, setHovered] = useState(false);
-  const teal = "#00B4D8";
-  const tealDk = "#003E54";
-  const tealMd = "#005F73";
 
   return (
     <button
@@ -238,19 +347,19 @@ function DevpostButton({ linked, onClick }: { linked: boolean; onClick: () => vo
         padding: "0 12px",
         height: 30,
         borderRadius: 6,
-        border: linked ? `1px solid ${tealMd}` : hovered ? `1px solid ${teal}55` : `1px solid ${tealDk}`,
+        border: linked ? "1px solid #005F73" : hovered ? "1px solid #00B4D855" : "1px solid #003E54aa",
         background: linked
-          ? `linear-gradient(180deg, ${tealDk}ee, ${tealDk}cc)`
+          ? "linear-gradient(180deg,#004d64,#003344)"
           : hovered
-            ? `linear-gradient(180deg, ${tealDk}cc, ${tealDk}aa)`
-            : `linear-gradient(180deg, ${tealDk}99, ${tealDk}77)`,
+            ? "linear-gradient(180deg,#003E54cc,#002a3aaa)"
+            : "linear-gradient(180deg,#003E5499,#002a3a77)",
         cursor: "pointer",
         transition: "all 0.18s ease",
         boxShadow: linked
-          ? `0 0 0 3px ${teal}22, inset 0 1px 0 rgba(255,255,255,0.06)`
+          ? "0 0 0 3px #00B4D822, inset 0 1px 0 rgba(255,255,255,0.07)"
           : hovered
-            ? `0 0 0 2px ${teal}18, inset 0 1px 0 rgba(255,255,255,0.04)`
-            : `inset 0 1px 0 rgba(255,255,255,0.04)`,
+            ? "0 0 0 2px #00B4D818, inset 0 1px 0 rgba(255,255,255,0.04)"
+            : "inset 0 1px 0 rgba(255,255,255,0.04)",
         flexShrink: 0,
         position: "relative",
         overflow: "hidden",
@@ -260,40 +369,51 @@ function DevpostButton({ linked, onClick }: { linked: boolean; onClick: () => vo
         <div
           style={{
             position: "absolute",
-            top: 0,
-            left: "-100%",
-            width: "60%",
-            height: "100%",
-            background: "linear-gradient(90deg,transparent,rgba(0,180,216,0.08),transparent)",
-            animation: "devpostShimmer 0.6s ease forwards",
+            inset: 0,
+            background: "linear-gradient(105deg,transparent 30%,rgba(0,180,216,0.09) 50%,transparent 70%)",
+            animation: "dp-shimmer 0.55s ease forwards",
             pointerEvents: "none",
           }}
         />
       )}
 
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect width="24" height="24" rx="5" fill={linked ? teal : hovered ? `${teal}cc` : `${teal}88`} style={{ transition: "fill 0.18s ease" }} />
-        <path d="M7 6h4.5C14.5 6 17 8.5 17 12s-2.5 6-5.5 6H7V6zm2.5 9.5H11c1.8 0 3-1.2 3-3.5s-1.2-3.5-3-3.5H9.5v7z" fill="white" />
-      </svg>
+      <DevpostMark size={15} />
 
-      <span style={{ fontSize: 12, fontWeight: 600, color: linked ? "#e0f7fc" : hovered ? `${teal}ee` : `${teal}99`, letterSpacing: "-0.01em", transition: "color 0.18s ease", whiteSpace: "nowrap" }}>
-        {linked ? "Devpost Linked" : "Link Devpost"}
+      <span
+        style={{
+          fontSize: 12,
+          fontWeight: 600,
+          color: linked ? "#7dd3fc" : hovered ? "#00B4D8dd" : "#00B4D888",
+          letterSpacing: "-0.01em",
+          transition: "color 0.18s ease",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {linked ? "Devpost linked" : "Link Devpost"}
       </span>
+
+      {linked && (
+        <div
+          style={{
+            width: 14,
+            height: 14,
+            borderRadius: "50%",
+            background: "#00B4D825",
+            border: "1px solid #00B4D855",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            animation: "dp-check-in 0.3s ease",
+          }}
+        >
+          <svg width="8" height="8" viewBox="0 0 12 12" fill="none">
+            <polyline points="2 6 5 9 10 3" stroke="#00B4D8" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+      )}
     </button>
   );
 }
-
-type ChallengeResponse = {
-  username: string;
-  phrase: string;
-  expires_at: string;
-};
-
-type VerifyResponse = {
-  verified: boolean;
-  username: string;
-  reason?: string;
-};
 
 function DevpostLinkModal({
   open,
@@ -302,204 +422,849 @@ function DevpostLinkModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onLinked: (username: string) => void;
+  onLinked: (username: string, token: string) => void;
 }) {
+  type Stage = "input" | "challenge" | "success";
+
+  const [stage, setStage] = useState<Stage>("input");
   const [username, setUsername] = useState("");
   const [challenge, setChallenge] = useState<ChallengeResponse | null>(null);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [loadingChallenge, setLoadingChallenge] = useState(false);
   const [loadingVerify, setLoadingVerify] = useState(false);
   const [error, setError] = useState("");
-  const [verifyReason, setVerifyReason] = useState("");
+  const [verifyMsg, setVerifyMsg] = useState("");
   const [copied, setCopied] = useState(false);
-  const [verified, setVerified] = useState(false);
+  const [token, setToken] = useState("");
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const API_BASE = "http://localhost:8080";
 
-  const computeSecondsLeft = useCallback((expiresAt: string) => Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000)), []);
-
-  useEffect(() => {
-    if (!open || !challenge) return;
-    setSecondsLeft(computeSecondsLeft(challenge.expires_at));
-    const timer = setInterval(() => {
-      setSecondsLeft(computeSecondsLeft(challenge.expires_at));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [challenge, computeSecondsLeft, open]);
-
-  useEffect(() => {
-    if (!open) return;
+  const handleClose = () => {
+    setStage("input");
+    setUsername("");
+    setChallenge(null);
+    setSecondsLeft(null);
     setError("");
-    setVerifyReason("");
+    setVerifyMsg("");
     setCopied(false);
-    setVerified(false);
-  }, [open]);
+    setToken("");
+    setTokenCopied(false);
+    onClose();
+  };
+
+  useEffect(() => {
+    if (open && stage === "input") {
+      const id = setTimeout(() => inputRef.current?.focus(), 80);
+      return () => clearTimeout(id);
+    }
+    return undefined;
+  }, [open, stage]);
+
+  useEffect(() => {
+    if (!challenge || stage !== "challenge") return undefined;
+
+    const tick = () => {
+      setSecondsLeft(Math.max(0, Math.floor((new Date(challenge.expires_at).getTime() - Date.now()) / 1000)));
+    };
+
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [challenge, stage]);
 
   const expired = secondsLeft !== null && secondsLeft <= 0;
 
-  const startChallenge = useCallback(
-    async (nameFromButton?: string) => {
-      const name = (nameFromButton ?? username).trim();
-      if (!name) {
-        setError("Please enter your Devpost username.");
-        return;
-      }
+  const startChallenge = async (name = username.trim()) => {
+    if (!name) {
+      setError("Enter your Devpost username.");
+      return;
+    }
 
-      try {
-        setLoadingChallenge(true);
-        setError("");
-        setVerifyReason("");
-        setVerified(false);
+    setLoadingChallenge(true);
+    setError("");
+    setVerifyMsg("");
 
-        const res = await fetch(`${API_BASE}/challenge`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: name }),
-        });
-
-        if (!res.ok) {
-          throw new Error(`Failed to generate challenge (${res.status})`);
-        }
-
-        const data = (await res.json()) as ChallengeResponse;
-        setUsername(data.username);
-        setChallenge(data);
-        setSecondsLeft(computeSecondsLeft(data.expires_at));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not generate challenge.");
-      } finally {
-        setLoadingChallenge(false);
-      }
-    },
-    [computeSecondsLeft, username],
-  );
-
-  const verify = useCallback(async () => {
-    if (!username.trim()) return;
     try {
-      setLoadingVerify(true);
-      setError("");
-      setVerifyReason("");
+      const res = await fetch(`${API_BASE}/challenge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: name }),
+      });
 
+      if (!res.ok) throw new Error(`Server error (${res.status})`);
+
+      const data = (await res.json()) as ChallengeResponse;
+      setChallenge(data);
+      setUsername(data.username);
+      setStage("challenge");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not generate challenge.");
+    } finally {
+      setLoadingChallenge(false);
+    }
+  };
+
+  const verify = async () => {
+    setLoadingVerify(true);
+    setError("");
+    setVerifyMsg("");
+
+    try {
       const res = await fetch(`${API_BASE}/verify?username=${encodeURIComponent(username.trim())}`);
-      if (!res.ok) {
-        throw new Error(`Verification failed (${res.status})`);
-      }
+      if (!res.ok) throw new Error(`Server error (${res.status})`);
 
       const data = (await res.json()) as VerifyResponse;
       if (data.verified) {
-        setVerified(true);
-        onLinked(data.username);
+        const newToken = generatePlatformToken(data.username);
+        setToken(newToken);
+        setStage("success");
+        onLinked(data.username, newToken);
       } else {
-        setVerifyReason(data.reason ?? "Not verified yet.");
+        setVerifyMsg(data.reason ?? "Phrase not found in bio yet.");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not verify yet.");
+      setError(err instanceof Error ? err.message : "Verification failed.");
     } finally {
       setLoadingVerify(false);
     }
-  }, [onLinked, username]);
+  };
 
-  const copyPhrase = useCallback(async () => {
+  const copyPhrase = async () => {
     if (!challenge?.phrase) return;
+
     try {
       await navigator.clipboard.writeText(challenge.phrase);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      setTimeout(() => setCopied(false), 1400);
     } catch {
-      setError("Could not copy. Please copy manually.");
+      setError("Copy failed — please select manually.");
     }
-  }, [challenge?.phrase]);
+  };
+
+  const copyToken = async () => {
+    try {
+      await navigator.clipboard.writeText(token);
+      setTokenCopied(true);
+      setTimeout(() => setTokenCopied(false), 1400);
+    } catch {
+      setError("Copy failed.");
+    }
+  };
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
   if (!open) return null;
 
+  const stepsDone = stage === "success" ? [1, 2, 3] : stage === "challenge" ? [1] : [];
+  const stepsActive = stage === "challenge" ? 2 : stage === "input" ? 1 : 3;
+
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div style={{ width: "100%", maxWidth: 560, borderRadius: 14, border: `1px solid ${T.border}`, background: T.bgElevated, boxShadow: "0 20px 55px rgba(0,0,0,0.45)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: `1px solid ${T.borderMuted}` }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>Link your Devpost</div>
-            <div style={{ fontSize: 12, color: T.textSubtle }}>Verify ownership with a temporary phrase</div>
-          </div>
-          <button onClick={onClose} style={{ border: "none", background: "transparent", color: T.textSubtle, cursor: "pointer", fontSize: 20, lineHeight: 1 }}>×</button>
-        </div>
+    <>
+      <style>{`
+        @keyframes dp-shimmer { from { left: -100%; } to { left: 160%; } }
+        @keyframes dp-check-in { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
+        @keyframes dp-modal-in { from { opacity: 0; transform: translateY(14px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes dp-fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes dp-token-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes dp-success-ring {
+          0% { box-shadow: 0 0 0 0 #23863640; }
+          70% { box-shadow: 0 0 0 10px #23863600; }
+          100% { box-shadow: 0 0 0 0 #23863600; }
+        }
+      `}</style>
 
-        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-          {!challenge && (
-            <>
-              <label style={{ fontSize: 12, color: T.textMuted }}>Devpost username</label>
-              <input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="jdoe"
-                style={{ height: 38, borderRadius: 8, border: `1px solid ${T.border}`, background: T.bgOverlay, color: T.text, padding: "0 12px", outline: "none" }}
-              />
-              <button
-                onClick={() => startChallenge()}
-                disabled={loadingChallenge}
-                style={{ height: 36, borderRadius: 8, border: `1px solid ${T.blueBorder}`, background: "linear-gradient(180deg,#1f6feb,#1158c7)", color: "white", fontWeight: 600, cursor: "pointer", opacity: loadingChallenge ? 0.75 : 1 }}
-              >
-                {loadingChallenge ? "Generating..." : "Generate challenge phrase"}
-              </button>
-            </>
-          )}
+      <div
+        onClick={handleClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 140,
+          background: "rgba(1,4,9,0.72)",
+          backdropFilter: "blur(5px)",
+        }}
+      />
 
-          {challenge && !verified && (
-            <>
-              <div style={{ fontSize: 12, color: T.textMuted }}>
-                Add this phrase to your Devpost bio for <strong>{username}</strong>.
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 141,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 16,
+          pointerEvents: "none",
+        }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            width: "100%",
+            maxWidth: 500,
+            borderRadius: 14,
+            border: `1px solid ${T.border}`,
+            background: T.bgElevated,
+            boxShadow: "0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)",
+            animation: "dp-modal-in 0.28s cubic-bezier(0.25,1,0.4,1) forwards",
+            pointerEvents: "all",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "14px 16px",
+              borderBottom: `1px solid ${T.borderMuted}`,
+              background: T.bgOverlay,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <DevpostMark size={22} />
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: T.text, letterSpacing: "-0.02em" }}>Link your Devpost</div>
+                <div style={{ fontSize: 11, color: T.textSubtle, marginTop: 1 }}>Verify ownership · one-time setup</div>
               </div>
-              <div style={{ borderRadius: 10, border: `1px solid ${T.border}`, background: T.bgOverlay, padding: "10px 12px" }}>
-                <div style={{ fontSize: 12, color: T.textSubtle, marginBottom: 6 }}>Challenge phrase</div>
-                <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.02em" }}>{challenge.phrase}</div>
-              </div>
-
-              <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={copyPhrase} style={{ flex: 1, height: 34, borderRadius: 8, border: `1px solid ${T.border}`, background: T.bgOverlay, color: T.text, cursor: "pointer" }}>
-                  {copied ? "Copied!" : "Copy phrase"}
-                </button>
-                <div style={{ minWidth: 110, height: 34, borderRadius: 8, border: `1px solid ${expired ? T.redBorder : T.border}`, background: expired ? T.redBg : T.bgOverlay, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: expired ? "#fca5a5" : T.textMuted }}>
-                  {secondsLeft === null ? "--:--" : expired ? "Expired" : formatTime(secondsLeft)}
-                </div>
-              </div>
-
-              <div style={{ fontSize: 12, color: T.textSubtle, lineHeight: 1.5 }}>
-                1) Paste phrase in your Devpost bio. 2) Save profile. 3) Come back and verify.
-              </div>
-
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  onClick={verify}
-                  disabled={loadingVerify || expired}
-                  style={{ flex: 1, height: 36, borderRadius: 8, border: `1px solid ${T.greenBorder}`, background: "linear-gradient(180deg,#238636,#1c6f2a)", color: "white", fontWeight: 600, cursor: "pointer", opacity: loadingVerify || expired ? 0.65 : 1 }}
-                >
-                  {loadingVerify ? "Checking..." : "I updated my bio"}
-                </button>
-                <button
-                  onClick={() => startChallenge(username)}
-                  disabled={loadingChallenge}
-                  style={{ flex: 1, height: 36, borderRadius: 8, border: `1px solid ${T.border}`, background: T.bgOverlay, color: T.text, cursor: "pointer", opacity: loadingChallenge ? 0.65 : 1 }}
-                >
-                  {loadingChallenge ? "Generating..." : "Generate new challenge"}
-                </button>
-              </div>
-            </>
-          )}
-
-          {verified && (
-            <div style={{ borderRadius: 10, border: `1px solid ${T.greenBorder}`, background: T.greenBg, padding: 14, color: "#86efac" }}>
-              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Devpost linked successfully</div>
-              <div style={{ fontSize: 12 }}>You are verified as @{username}. You can close this window.</div>
             </div>
-          )}
+            <button
+              onClick={handleClose}
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                border: `1px solid ${T.borderMuted}`,
+                background: "transparent",
+                color: T.textMuted,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 16,
+                lineHeight: 1,
+                transition: "background 0.15s, color 0.15s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = T.bgHover;
+                e.currentTarget.style.color = T.text;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.color = T.textMuted;
+              }}
+            >
+              ×
+            </button>
+          </div>
 
-          {verifyReason && !verified && <div style={{ fontSize: 12, color: "#fca5a5" }}>Not verified yet: {verifyReason}</div>}
-          {error && <div style={{ fontSize: 12, color: "#fca5a5" }}>{error}</div>}
+          <div style={{ padding: "20px 20px 22px", display: "flex", flexDirection: "column", gap: 18 }}>
+            {stage === "input" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14, animation: "dp-fade-in 0.25s ease" }}>
+                <div
+                  style={{
+                    borderRadius: 10,
+                    border: "1px solid #003E54",
+                    background: "#001e2b",
+                    padding: "12px 14px",
+                    display: "flex",
+                    gap: 12,
+                    alignItems: "flex-start",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 8,
+                      background: "#00B4D815",
+                      border: "1px solid #00B4D830",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <DevpostMark size={18} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: T.text, marginBottom: 3 }}>How it works</div>
+                    <div style={{ fontSize: 11, color: T.textSubtle, lineHeight: 1.6 }}>
+                      We'll give you a short phrase. Paste it into your Devpost bio, then come back and hit verify. Takes 30
+                      seconds.
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <label
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: T.textMuted,
+                      letterSpacing: "0.03em",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Devpost username
+                  </label>
+                  <div style={{ position: "relative" }}>
+                    <span
+                      style={{
+                        position: "absolute",
+                        left: 12,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        fontSize: 12,
+                        color: T.textSubtle,
+                        pointerEvents: "none",
+                      }}
+                    >
+                      devpost.com/
+                    </span>
+                    <input
+                      ref={inputRef}
+                      value={username}
+                      onChange={(e) => {
+                        setUsername(e.target.value);
+                        setError("");
+                      }}
+                      onKeyDown={(e) => e.key === "Enter" && startChallenge()}
+                      placeholder="jdoe"
+                      style={{
+                        width: "100%",
+                        height: 38,
+                        borderRadius: 8,
+                        border: `1px solid ${error ? T.redBorder : T.border}`,
+                        background: T.bg,
+                        color: T.text,
+                        fontSize: 13,
+                        padding: "0 12px 0 96px",
+                        outline: "none",
+                        transition: "border-color 0.15s",
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = T.blueBorder;
+                        e.currentTarget.style.boxShadow = `0 0 0 3px ${T.blueBorder}33`;
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = error ? T.redBorder : T.border;
+                        e.currentTarget.style.boxShadow = "none";
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => startChallenge()}
+                  disabled={loadingChallenge || !username.trim()}
+                  style={{
+                    height: 38,
+                    borderRadius: 8,
+                    border: `1px solid ${T.blueBorder}`,
+                    background: "linear-gradient(180deg,#1f6feb,#1158c7)",
+                    color: "#fff",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: loadingChallenge || !username.trim() ? "not-allowed" : "pointer",
+                    opacity: loadingChallenge || !username.trim() ? 0.65 : 1,
+                    transition: "opacity 0.15s",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 7,
+                  }}
+                >
+                  {loadingChallenge ? (
+                    <>
+                      <Spinner /> Generating…
+                    </>
+                  ) : (
+                    "Generate verification phrase →"
+                  )}
+                </button>
+              </div>
+            )}
+
+            {stage === "challenge" && challenge && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16, animation: "dp-fade-in 0.25s ease" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <StepRow n={1} done={stepsDone.includes(1)} active={stepsActive === 1} label="Phrase generated" sub={`For @${username}`} />
+                  <div style={{ width: 1, height: 10, background: T.borderMuted, marginLeft: 11 }} />
+                  <StepRow n={2} done={stepsDone.includes(2)} active={stepsActive === 2} label="Paste it in your Devpost bio" sub="devpost.com/settings → Bio → Save" />
+                  <div style={{ width: 1, height: 10, background: T.borderMuted, marginLeft: 11 }} />
+                  <StepRow n={3} done={stepsDone.includes(3)} active={stepsActive === 3} label="Verify & receive your signup token" />
+                </div>
+
+                <div
+                  style={{
+                    borderRadius: 10,
+                    border: `1px solid ${T.border}`,
+                    background: T.bg,
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: "8px 12px",
+                      borderBottom: `1px solid ${T.borderMuted}`,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 600,
+                        color: T.textSubtle,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                      }}
+                    >
+                      Verification phrase
+                    </span>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 5,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: expired ? "#f85149" : secondsLeft !== null && secondsLeft < 60 ? T.orange : T.textSubtle,
+                        background: expired ? T.redBg : T.bgOverlay,
+                        border: `1px solid ${expired ? T.redBorder : T.borderMuted}`,
+                        borderRadius: 6,
+                        padding: "2px 8px",
+                        transition: "color 0.3s, background 0.3s",
+                      }}
+                    >
+                      <svg
+                        width="9"
+                        height="9"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                      >
+                        <circle cx="12" cy="12" r="10" />
+                        <polyline points="12 6 12 12 16 14" />
+                      </svg>
+                      {secondsLeft === null ? "--:--" : expired ? "Expired" : formatTime(secondsLeft)}
+                    </div>
+                  </div>
+
+                  <div style={{ padding: "14px 16px", cursor: "pointer" }} onClick={copyPhrase} title="Click to copy">
+                    <div
+                      style={{
+                        fontSize: 18,
+                        fontWeight: 700,
+                        color: T.text,
+                        letterSpacing: "0.025em",
+                        lineHeight: 1.5,
+                        fontFamily: "monospace",
+                      }}
+                    >
+                      {challenge.phrase}
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      padding: "8px 12px",
+                      borderTop: `1px solid ${T.borderMuted}`,
+                      display: "flex",
+                      gap: 8,
+                    }}
+                  >
+                    <button
+                      onClick={copyPhrase}
+                      style={{
+                        flex: 1,
+                        height: 30,
+                        borderRadius: 6,
+                        border: `1px solid ${copied ? T.greenBorder : T.border}`,
+                        background: copied ? T.greenBg : T.bgOverlay,
+                        color: copied ? T.greenLight : T.textMuted,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 5,
+                        transition: "all 0.2s ease",
+                      }}
+                    >
+                      {copied ? (
+                        <>
+                          <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                            <polyline points="2 6 5 9 10 3" stroke={T.greenLight} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>{" "}
+                          Copied
+                        </>
+                      ) : (
+                        <>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" />
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                          </svg>{" "}
+                          Copy phrase
+                        </>
+                      )}
+                    </button>
+                    <a
+                      href="https://devpost.com/settings#custom-profiles"
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        flex: 1,
+                        height: 30,
+                        borderRadius: 6,
+                        border: "1px solid #003E54",
+                        background: "#001e2b",
+                        color: "#00B4D8aa",
+                        fontSize: 11,
+                        fontWeight: 600,
+                        textDecoration: "none",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 5,
+                        transition: "color 0.15s, border-color 0.15s",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = "#00B4D8";
+                        e.currentTarget.style.borderColor = "#005F73";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = "#00B4D8aa";
+                        e.currentTarget.style.borderColor = "#003E54";
+                      }}
+                    >
+                      <DevpostMark size={11} />
+                      Open Devpost ↗
+                    </a>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={verify}
+                    disabled={loadingVerify || expired}
+                    style={{
+                      flex: 2,
+                      height: 38,
+                      borderRadius: 8,
+                      border: `1px solid ${T.greenBorder}`,
+                      background: "linear-gradient(180deg,#238636,#1c6f2a)",
+                      color: "#fff",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: loadingVerify || expired ? "not-allowed" : "pointer",
+                      opacity: loadingVerify || expired ? 0.65 : 1,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 7,
+                      transition: "opacity 0.15s",
+                    }}
+                  >
+                    {loadingVerify ? (
+                      <>
+                        <Spinner color="#fff" /> Checking bio…
+                      </>
+                    ) : (
+                      "I've updated my bio  →"
+                    )}
+                  </button>
+                  <button
+                    onClick={() => startChallenge(username)}
+                    disabled={loadingChallenge}
+                    style={{
+                      flex: 1,
+                      height: 38,
+                      borderRadius: 8,
+                      border: `1px solid ${T.border}`,
+                      background: T.bgOverlay,
+                      color: T.textMuted,
+                      fontSize: 12,
+                      fontWeight: 500,
+                      cursor: loadingChallenge ? "not-allowed" : "pointer",
+                      opacity: loadingChallenge ? 0.65 : 1,
+                      transition: "opacity 0.15s",
+                    }}
+                  >
+                    {loadingChallenge ? "…" : "New phrase"}
+                  </button>
+                </div>
+
+                {verifyMsg && !error && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 8,
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      background: "#2d1f09",
+                      border: "1px solid #6e4d14",
+                      fontSize: 12,
+                      color: T.orange,
+                      animation: "dp-fade-in 0.2s ease",
+                    }}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      style={{ flexShrink: 0, marginTop: 1 }}
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    <span>{verifyMsg} Make sure you saved your Devpost profile.</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {stage === "success" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16, animation: "dp-fade-in 0.3s ease" }}>
+                <div
+                  style={{
+                    borderRadius: 12,
+                    border: `1px solid ${T.greenBorder}`,
+                    background: `linear-gradient(135deg, ${T.greenBg}, #0a1f0f)`,
+                    padding: "18px 16px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    animation: "dp-success-ring 0.8s ease",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: "50%",
+                      flexShrink: 0,
+                      background: `linear-gradient(135deg, ${T.green}, ${T.greenLight})`,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      boxShadow: `0 0 0 8px ${T.green}22`,
+                    }}
+                  >
+                    <svg
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#fff"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: T.greenLight, marginBottom: 3 }}>Verified as @{username}</div>
+                    <div style={{ fontSize: 11, color: "#86efac", lineHeight: 1.5 }}>Your Devpost is now linked to HackRank.</div>
+                  </div>
+                </div>
+
+                <div style={{ animation: "dp-token-in 0.35s 0.1s ease both" }}>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: T.textSubtle,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                      marginBottom: 8,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <rect x="3" y="11" width="18" height="11" rx="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                    Your signup token
+                  </div>
+
+                  <div
+                    style={{
+                      borderRadius: 10,
+                      border: `1px solid ${T.border}`,
+                      background: T.bg,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div style={{ padding: "12px 14px" }}>
+                      <div
+                        style={{
+                          fontSize: 10.5,
+                          fontFamily: "monospace",
+                          color: T.textMuted,
+                          wordBreak: "break-all",
+                          lineHeight: 1.7,
+                          userSelect: "all",
+                        }}
+                      >
+                        {token}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        borderTop: `1px solid ${T.borderMuted}`,
+                        padding: "8px 12px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <span style={{ fontSize: 11, color: T.textSubtle }}>Use this token to create your HackRank account</span>
+                      <button
+                        onClick={copyToken}
+                        style={{
+                          height: 26,
+                          padding: "0 10px",
+                          borderRadius: 6,
+                          border: `1px solid ${tokenCopied ? T.greenBorder : T.border}`,
+                          background: tokenCopied ? T.greenBg : T.bgOverlay,
+                          color: tokenCopied ? T.greenLight : T.textMuted,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 5,
+                          transition: "all 0.2s ease",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {tokenCopied ? (
+                          <>
+                            <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                              <polyline points="2 6 5 9 10 3" stroke={T.greenLight} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>{" "}
+                            Copied
+                          </>
+                        ) : (
+                          "Copy token"
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 8,
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      background: T.bgOverlay,
+                      border: `1px solid ${T.borderMuted}`,
+                      fontSize: 11,
+                      color: T.textSubtle,
+                      lineHeight: 1.5,
+                      display: "flex",
+                      gap: 7,
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke={T.textSubtle}
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      style={{ flexShrink: 0, marginTop: 1 }}
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    Keep this token safe. It expires and can only be used once. Your backend should exchange it for a real session
+                    after verifying the included <code style={{ background: T.bgHover, padding: "0 4px", borderRadius: 3 }}>jti</code>.
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleClose}
+                  style={{
+                    height: 36,
+                    borderRadius: 8,
+                    border: `1px solid ${T.border}`,
+                    background: T.bgOverlay,
+                    color: T.textMuted,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            )}
+
+            {error && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "9px 12px",
+                  borderRadius: 8,
+                  background: T.redBg,
+                  border: `1px solid ${T.redBorder}`,
+                  fontSize: 12,
+                  color: "#fca5a5",
+                  animation: "dp-fade-in 0.2s ease",
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fca5a5" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                {error}
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </>
+  );
+}
+
+function Spinner({ color = T.textSubtle }: { color?: string }) {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      style={{ animation: "spin 0.7s linear infinite", flexShrink: 0 }}
+    >
+      <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
   );
 }
 
@@ -845,6 +1610,7 @@ export default function RateHackathonsPage() {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [devpostModalOpen, setDevpostModalOpen] = useState(false);
   const [devpostLinkedUser, setDevpostLinkedUser] = useState<string | null>(null);
+  const [devpostToken, setDevpostToken] = useState<string | null>(null);
 
   useEffect(() => {
     setPair(nextPair(DATA));
@@ -948,7 +1714,10 @@ export default function RateHackathonsPage() {
       <DevpostLinkModal
         open={devpostModalOpen}
         onClose={() => setDevpostModalOpen(false)}
-        onLinked={(username) => setDevpostLinkedUser(username)}
+        onLinked={(username, token) => {
+          setDevpostLinkedUser(username);
+          setDevpostToken(token);
+        }}
       />
 
       <main style={{ maxWidth: 1012, margin: "0 auto", padding: "0 16px" }}>
