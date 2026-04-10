@@ -89,6 +89,22 @@ var wordList = []string{
 	"yield", "young", "zappy", "zebra", "zenith", "zesty", "zilch", "zippy",
 }
 
+func withCORS(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Max-Age", "600")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
 // In-memory challenge store (THIS IS TEMPORARY)
 
 type Challenge struct {
@@ -362,10 +378,10 @@ func verifyHandler(w http.ResponseWriter, r *http.Request) {
 
 
 func main() {
-	http.HandleFunc("/health",    healthHandler)
-	http.HandleFunc("/bio",       bioHandler)
-	http.HandleFunc("/challenge", challengeHandler)
-	http.HandleFunc("/verify",    verifyHandler)
+	http.HandleFunc("/health", withCORS(healthHandler))
+	http.HandleFunc("/bio", withCORS(bioHandler))
+	http.HandleFunc("/challenge", withCORS(challengeHandler))
+	http.HandleFunc("/verify", withCORS(verifyHandler))
 
 	fmt.Println("Server running on http://localhost:8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
