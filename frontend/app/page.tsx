@@ -44,6 +44,12 @@ type ChipProps = {
   compact?: boolean;
 };
 
+type AccountUser = {
+  username: string;
+  devpostUsername: string;
+  createdAt: string;
+};
+
 const DATA = hackathonsData as Hackathon[];
 const RATING_KEYS: (keyof Ratings)[] = [
   "food",
@@ -422,7 +428,7 @@ function DevpostLinkModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onLinked: (username: string, token: string) => void;
+  onLinked: (user: AccountUser) => void;
 }) {
   type Stage = "input" | "challenge" | "success" | "registered";
 
@@ -534,7 +540,6 @@ function DevpostLinkModal({
         setToken(newToken);
         setSignupUsername(data.username.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32));
         setStage("success");
-        onLinked(data.username, newToken);
       } else {
         setVerifyMsg(data.reason ?? "Phrase not found in bio yet.");
       }
@@ -580,7 +585,7 @@ function DevpostLinkModal({
         body: JSON.stringify({ token, username: signupUsername.trim(), password: signupPassword }),
       });
 
-      const data = (await res.json()) as { ok?: boolean; user?: { username: string }; error?: string };
+      const data = (await res.json()) as { ok?: boolean; user?: { username: string; devpostUsername: string; createdAt: string }; error?: string };
 
       if (!res.ok || !data.ok) {
         setSignupError(data.error ?? `Server error (${res.status})`);
@@ -589,6 +594,9 @@ function DevpostLinkModal({
 
       setCreatedUser(data.user?.username ?? signupUsername.trim());
       setStage("registered");
+      if (data.user) {
+        onLinked({ username: data.user.username, devpostUsername: username, createdAt: data.user.createdAt });
+      }
     } catch (err) {
       setSignupError(err instanceof Error ? err.message : "Signup failed.");
     } finally {
@@ -1341,6 +1349,329 @@ function RankingRow({ h, i, expanded, onToggle }: { h: Hackathon; i: number; exp
   );
 }
 
+// ── ProfileButton ─────────────────────────────────────────────────────────────
+
+function ProfileButton({
+  account,
+  votes,
+  onSignOut,
+}: {
+  account: AccountUser;
+  votes: number;
+  onSignOut: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: Event) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const initials = account.username.slice(0, 2).toUpperCase();
+  const joined   = new Date(account.createdAt).toLocaleDateString("en-US", { month: "short", year: "numeric" });
+
+  return (
+    <div ref={ref} style={{ position: "relative", flexShrink: 0 }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: "50%",
+          border: `1.5px solid ${open ? T.blue : T.border}`,
+          background: open
+            ? "linear-gradient(135deg,#1f6feb,#1158c7)"
+            : "linear-gradient(135deg,#21262d,#161b22)",
+          color: open ? "#fff" : T.textMuted,
+          fontSize: 11,
+          fontWeight: 700,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          letterSpacing: "-0.02em",
+          transition: "all 0.18s ease",
+          boxShadow: open ? `0 0 0 3px ${T.blueBorder}33` : "none",
+        }}
+        onMouseEnter={(e) => {
+          if (!open) {
+            e.currentTarget.style.borderColor = T.blue;
+            e.currentTarget.style.boxShadow   = `0 0 0 3px ${T.blueBorder}22`;
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!open) {
+            e.currentTarget.style.borderColor = T.border;
+            e.currentTarget.style.boxShadow   = "none";
+          }
+        }}
+      >
+        {initials}
+      </button>
+
+      {open && (
+        <ProfileDropdown
+          account={account}
+          votes={votes}
+          joined={joined}
+          onSignOut={() => { setOpen(false); onSignOut(); }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── ProfileDropdown ───────────────────────────────────────────────────────────
+
+function ProfileDropdown({
+  account,
+  votes,
+  joined,
+  onSignOut,
+  onClose,
+}: {
+  account: AccountUser;
+  votes: number;
+  joined: string;
+  onSignOut: () => void;
+  onClose: () => void;
+}) {
+  const initials = account.username.slice(0, 2).toUpperCase();
+
+  return (
+    <>
+      <style>{`
+        @keyframes profile-drop-in {
+          from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+          to   { opacity: 1; transform: translateY(0)    scale(1);    }
+        }
+      `}</style>
+
+      <div
+        style={{
+          position: "absolute",
+          top: "calc(100% + 10px)",
+          right: 0,
+          width: 248,
+          borderRadius: 12,
+          border: `1px solid ${T.border}`,
+          background: T.bgElevated,
+          boxShadow: "0 16px 48px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04)",
+          animation: "profile-drop-in 0.2s cubic-bezier(0.25,1,0.4,1) forwards",
+          zIndex: 200,
+          overflow: "hidden",
+        }}
+      >
+        {/* Identity section */}
+        <div
+          style={{
+            padding: "14px 14px 12px",
+            borderBottom: `1px solid ${T.borderMuted}`,
+            background: T.bgOverlay,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <div
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: "50%",
+                background: "linear-gradient(135deg,#1f6feb,#388bfd)",
+                border: `1.5px solid ${T.blueBorder}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 14,
+                fontWeight: 700,
+                color: "#fff",
+                flexShrink: 0,
+                boxShadow: "0 0 0 3px #1f6feb18",
+              }}
+            >
+              {initials}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: T.text,
+                  letterSpacing: "-0.02em",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                @{account.username}
+              </div>
+              <div style={{ fontSize: 10, color: T.textSubtle, marginTop: 1 }}>
+                Joined {joined}
+              </div>
+            </div>
+          </div>
+
+          {/* Devpost linked pill */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              padding: "6px 9px",
+              borderRadius: 8,
+              background: "#001e2b",
+              border: "1px solid #003E54",
+            }}
+          >
+            <DevpostMark size={14} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 9, fontWeight: 600, color: T.textSubtle, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 1 }}>
+                Devpost
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "#00B4D8",
+                  fontWeight: 600,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                @{account.devpostUsername}
+              </div>
+            </div>
+            <div
+              style={{
+                width: 16,
+                height: 16,
+                borderRadius: "50%",
+                background: "#00B4D820",
+                border: "1px solid #00B4D850",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              <svg width="8" height="8" viewBox="0 0 12 12" fill="none">
+                <polyline points="2 6 5 9 10 3" stroke="#00B4D8" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        {/* Stats row */}
+        <div style={{ display: "flex", borderBottom: `1px solid ${T.borderMuted}` }}>
+          {[
+            { label: "Votes cast", value: votes.toString() },
+            { label: "Member since", value: joined },
+          ].map(({ label, value }, i) => (
+            <div
+              key={label}
+              style={{
+                flex: 1,
+                padding: "10px 14px",
+                borderRight: i === 0 ? `1px solid ${T.borderMuted}` : "none",
+              }}
+            >
+              <div style={{ fontSize: 15, fontWeight: 700, color: T.text, letterSpacing: "-0.02em" }}>
+                {value}
+              </div>
+              <div style={{ fontSize: 9.5, color: T.textSubtle, marginTop: 2, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>
+                {label}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Menu items */}
+        <div style={{ padding: "6px 0" }}>
+          <DropdownItem
+            icon={
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
+            }
+            label="Your profile"
+            onClick={onClose}
+          />
+          <DropdownItem
+            icon={
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+              </svg>
+            }
+            label="Your votes"
+            onClick={onClose}
+          />
+          <div style={{ height: 1, background: T.borderMuted, margin: "5px 0" }} />
+          <DropdownItem
+            icon={
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+            }
+            label="Sign out"
+            onClick={onSignOut}
+            danger
+          />
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── DropdownItem ──────────────────────────────────────────────────────────────
+
+function DropdownItem({
+  icon,
+  label,
+  onClick,
+  danger = false,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  const [hov, setHov] = useState(false);
+
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        width: "100%",
+        padding: "7px 14px",
+        display: "flex",
+        alignItems: "center",
+        gap: 9,
+        background: hov ? (danger ? T.redBg : T.bgHover) : "transparent",
+        border: "none",
+        cursor: "pointer",
+        color: hov ? (danger ? "#f85149" : T.text) : danger ? "#f85149" : T.textMuted,
+        fontSize: 12,
+        fontWeight: 500,
+        textAlign: "left",
+        transition: "background 0.12s ease, color 0.12s ease",
+      }}
+    >
+      <span style={{ opacity: 0.75, flexShrink: 0 }}>{icon}</span>
+      {label}
+    </button>
+  );
+}
+
 export default function RateHackathonsPage() {
   const [hackathons, setHackathons] = useState<Hackathon[]>(DATA);
   const [view, setView] = useState<ViewMode>("vote");
@@ -1351,8 +1682,7 @@ export default function RateHackathonsPage() {
   const [visible, setVisible] = useState(true);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [devpostModalOpen, setDevpostModalOpen] = useState(false);
-  const [devpostLinkedUser, setDevpostLinkedUser] = useState<string | null>(null);
-  const [devpostToken, setDevpostToken] = useState<string | null>(null);
+  const [account, setAccount] = useState<AccountUser | null>(null);
 
   useEffect(() => {
     setPair(nextPair(DATA));
@@ -1448,7 +1778,10 @@ export default function RateHackathonsPage() {
                 {hackathons.reduce((s, h) => s + h.votes, 0).toLocaleString()} votes
               </span>
             </div>
-            <DevpostButton linked={Boolean(devpostLinkedUser)} onClick={() => setDevpostModalOpen(true)} />
+            {account
+              ? <ProfileButton account={account} votes={streak} onSignOut={() => setAccount(null)} />
+              : <DevpostButton linked={false} onClick={() => setDevpostModalOpen(true)} />
+            }
           </div>
         </div>
       </header>
@@ -1456,10 +1789,7 @@ export default function RateHackathonsPage() {
       <DevpostLinkModal
         open={devpostModalOpen}
         onClose={() => setDevpostModalOpen(false)}
-        onLinked={(username, token) => {
-          setDevpostLinkedUser(username);
-          setDevpostToken(token);
-        }}
+        onLinked={(user) => { setAccount(user); setDevpostModalOpen(false); }}
       />
 
       <main style={{ maxWidth: 1012, margin: "0 auto", padding: "0 16px" }}>
