@@ -497,12 +497,165 @@ func hackathonsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── Project scraper ───────────────────────────────────────────────────────────
+
+type ScrapedProject struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Tagline       string `json:"tagline"`
+	URL           string `json:"url"`
+	ImageURL      string `json:"imageUrl"`
+	IsWinner      bool   `json:"isWinner"`
+	HackathonURL  string `json:"hackathonUrl"`
+	HackathonName string `json:"hackathonName"`
+	PrizeCategory string `json:"prizeCategory"`
+}
+
+func scrapeProjectDetail(projectURL string) (hackathonURL, hackathonName, prizeCategory string) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", projectURL, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; HackRank/1.0)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return
+	}
+	defer resp.Body.Close()
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return
+	}
+
+	hackathonURL, _ = doc.Find("figure.software-list-thumbnail.challenge_avatar a").First().Attr("href")
+	hackathonName = strings.TrimSpace(doc.Find("div.software-list-content p a").First().Text())
+
+	doc.Find("div.software-list-content ul.no-bullet li").Each(func(_ int, li *goquery.Selection) {
+		if li.Find("span.winner").Length() > 0 {
+			li.Find("span.winner").Remove()
+			prizeCategory = strings.TrimSpace(li.Text())
+		}
+	})
+	return
+}
+
+func scrapeUserProjects(devpostUsername string) ([]ScrapedProject, error) {
+	targetURL := "https://devpost.com/" + strings.TrimPrefix(devpostUsername, "@")
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	req, err := http.NewRequest("GET", targetURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; HackRank/1.0)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch profile page: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("devpost returned status %d", resp.StatusCode)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	var projects []ScrapedProject
+
+	doc.Find("#software-entries .gallery-item").Each(func(_ int, item *goquery.Selection) {
+		p := ScrapedProject{}
+		p.ID, _ = item.Attr("data-software-id")
+
+		link := item.Find("a.block-wrapper-link").First()
+		p.URL, _ = link.Attr("href")
+
+		img := item.Find("img.software_thumbnail_image").First()
+		src, _ := img.Attr("src")
+		if strings.HasPrefix(src, "//") {
+			src = "https:" + src
+		}
+		p.ImageURL = src
+
+		p.Name = strings.TrimSpace(item.Find("h5").First().Text())
+		p.Tagline = strings.TrimSpace(item.Find("p.small.tagline").First().Text())
+		p.IsWinner = item.Find("aside.entry-badge img.winner").Length() > 0
+
+		if p.Name != "" {
+			projects = append(projects, p)
+		}
+	})
+
+	// Fetch project detail pages in parallel (max 5 concurrent) to get hackathon info
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	sem := make(chan struct{}, 5)
+
+	for i := range projects {
+		if projects[i].URL == "" {
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			hURL, hName, prize := scrapeProjectDetail(projects[i].URL)
+			mu.Lock()
+			projects[i].HackathonURL = hURL
+			projects[i].HackathonName = hName
+			projects[i].PrizeCategory = prize
+			mu.Unlock()
+		}(i)
+	}
+	wg.Wait()
+
+	if projects == nil {
+		projects = []ScrapedProject{}
+	}
+	return projects, nil
+}
+
+// GET /projects?username=<devpost_username>
+func projectsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "use GET"})
+		return
+	}
+
+	username := strings.TrimSpace(r.URL.Query().Get("username"))
+	if username == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing username query param"})
+		return
+	}
+
+	projects, err := scrapeUserProjects(username)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"username": username,
+		"projects": projects,
+	})
+}
+
 func main() {
 	http.HandleFunc("/health", withCORS(healthHandler))
 	http.HandleFunc("/bio", withCORS(bioHandler))
 	http.HandleFunc("/challenge", withCORS(challengeHandler))
 	http.HandleFunc("/verify", withCORS(verifyHandler))
 	http.HandleFunc("/hackathons", withCORS(hackathonsHandler))
+	http.HandleFunc("/projects", withCORS(projectsHandler))
 
 	fmt.Println("Server running on http://localhost:8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
