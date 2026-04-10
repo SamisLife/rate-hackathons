@@ -430,7 +430,7 @@ function DevpostLinkModal({
   onClose: () => void;
   onLinked: (user: AccountUser) => void;
 }) {
-  type Stage = "input" | "challenge" | "success" | "registered";
+  type Stage = "input" | "challenge" | "success" | "registered" | "login";
 
   const [stage, setStage] = useState<Stage>("input");
   const [username, setUsername] = useState("");
@@ -451,6 +451,12 @@ function DevpostLinkModal({
   const [signupError, setSignupError] = useState("");
   const [createdUser, setCreatedUser] = useState<string>("");
 
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loadingLogin, setLoadingLogin] = useState(false);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const API_BASE = "http://localhost:8080";
 
@@ -469,6 +475,10 @@ function DevpostLinkModal({
     setSignupError("");
     setCreatedUser("");
     setShowPassword(false);
+    setLoginUsername("");
+    setLoginPassword("");
+    setLoginError("");
+    setShowLoginPassword(false);
     onClose();
   };
 
@@ -604,6 +614,32 @@ function DevpostLinkModal({
     }
   };
 
+  const handleLogin = async () => {
+    setLoginError("");
+    if (!loginUsername.trim() || !loginPassword) {
+      setLoginError("Enter your username and password.");
+      return;
+    }
+    setLoadingLogin(true);
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginUsername.trim(), password: loginPassword }),
+      });
+      const data = (await res.json()) as { ok?: boolean; user?: { username: string; devpostUsername: string; createdAt: string }; error?: string };
+      if (!res.ok || !data.ok || !data.user) {
+        setLoginError(data.error ?? `Server error (${res.status})`);
+        return;
+      }
+      onLinked({ username: data.user.username, devpostUsername: data.user.devpostUsername, createdAt: data.user.createdAt });
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : "Login failed.");
+    } finally {
+      setLoadingLogin(false);
+    }
+  };
+
   if (!open) return null;
 
   const stepsDone = stage === "success" || stage === "registered" ? [1, 2, 3] : stage === "challenge" ? [1] : [];
@@ -724,6 +760,81 @@ function DevpostLinkModal({
                   ) : (
                     "Generate verification phrase →"
                   )}
+                </button>
+
+                <button
+                  onClick={() => { setLoginError(""); setStage("login"); }}
+                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: T.textMuted, padding: "2px 0", alignSelf: "center", transition: "color 0.15s" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = T.blue; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = T.textMuted; }}
+                >
+                  Already have an account? <span style={{ color: T.blue, fontWeight: 600 }}>Sign in</span>
+                </button>
+              </div>
+            )}
+
+            {stage === "login" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14, animation: "dp-fade-in 0.25s ease" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, letterSpacing: "0.03em", textTransform: "uppercase" }}>Username</label>
+                  <input
+                    value={loginUsername}
+                    onChange={(e) => { setLoginUsername(e.target.value); setLoginError(""); }}
+                    onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                    placeholder="your-username"
+                    style={{ height: 38, borderRadius: 8, border: `1px solid ${loginError ? T.redBorder : T.border}`, background: T.bg, color: T.text, fontSize: 13, padding: "0 12px", outline: "none", transition: "border-color 0.15s, box-shadow 0.15s" }}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = T.blueBorder; e.currentTarget.style.boxShadow = `0 0 0 3px ${T.blueBorder}33`; }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = loginError ? T.redBorder : T.border; e.currentTarget.style.boxShadow = "none"; }}
+                  />
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, letterSpacing: "0.03em", textTransform: "uppercase" }}>Password</label>
+                  <div style={{ position: "relative" }}>
+                    <input
+                      type={showLoginPassword ? "text" : "password"}
+                      value={loginPassword}
+                      onChange={(e) => { setLoginPassword(e.target.value); setLoginError(""); }}
+                      onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                      placeholder="••••••••"
+                      style={{ width: "100%", height: 38, borderRadius: 8, border: `1px solid ${loginError ? T.redBorder : T.border}`, background: T.bg, color: T.text, fontSize: 13, padding: "0 38px 0 12px", outline: "none", transition: "border-color 0.15s, box-shadow 0.15s" }}
+                      onFocus={(e) => { e.currentTarget.style.borderColor = T.blueBorder; e.currentTarget.style.boxShadow = `0 0 0 3px ${T.blueBorder}33`; }}
+                      onBlur={(e) => { e.currentTarget.style.borderColor = loginError ? T.redBorder : T.border; e.currentTarget.style.boxShadow = "none"; }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword((v) => !v)}
+                      style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: T.textSubtle, padding: 2, display: "flex", alignItems: "center" }}
+                    >
+                      {showLoginPassword
+                        ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                        : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                      }
+                    </button>
+                  </div>
+                </div>
+
+                {loginError && (
+                  <div style={{ fontSize: 11, color: "#f85149", background: T.redBg, border: `1px solid ${T.redBorder}`, borderRadius: 7, padding: "8px 10px" }}>
+                    {loginError}
+                  </div>
+                )}
+
+                <button
+                  onClick={handleLogin}
+                  disabled={loadingLogin || !loginUsername.trim() || !loginPassword}
+                  style={{ height: 38, borderRadius: 8, border: `1px solid ${T.blueBorder}`, background: "linear-gradient(180deg,#1f6feb,#1158c7)", color: "#fff", fontSize: 13, fontWeight: 600, cursor: loadingLogin || !loginUsername.trim() || !loginPassword ? "not-allowed" : "pointer", opacity: loadingLogin || !loginUsername.trim() || !loginPassword ? 0.65 : 1, transition: "opacity 0.15s", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
+                >
+                  {loadingLogin ? <><Spinner color="#fff" /> Signing in…</> : "Sign in →"}
+                </button>
+
+                <button
+                  onClick={() => { setLoginError(""); setStage("input"); }}
+                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: T.textMuted, padding: "2px 0", alignSelf: "center", transition: "color 0.15s" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = T.text; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = T.textMuted; }}
+                >
+                  ← Back to sign up
                 </button>
               </div>
             )}
