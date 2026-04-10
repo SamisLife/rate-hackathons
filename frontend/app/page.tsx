@@ -32,6 +32,46 @@ type ViewMode = "vote" | "rankings";
 type VotePhase = "idle" | "voted";
 type CardState = "idle" | "winner" | "loser";
 
+type HackathonScore = {
+  id: number;
+  rawVotes: number;      // integer count of votes cast (display)
+  weightedVotes: number; // sum of weights (ranking)
+  weightedWins: number;  // sum of winner weights (ranking)
+  winRate: number;       // weightedWins/weightedVotes×100
+};
+
+type VoteWeight = { weight: number; tier: string };
+
+const TIER_LABELS: Record<string, string> = {
+  anon:               "Anonymous",
+  verified_no_attend: "Verified · No Hackathons",
+  verified_attended:  "Verified · Attended",
+  same_state:         "Same State",
+  same_org:           "Same University",
+  attended_one:       "Attended One",
+  attended_both:      "Attended Both",
+};
+
+const TIER_COLORS: Record<string, string> = {
+  anon:               "#484f58",
+  verified_no_attend: "#58a6ff",
+  verified_attended:  "#79c0ff",
+  same_state:         "#e3b341",
+  same_org:           "#f0883e",
+  attended_one:       "#3fb950",
+  attended_both:      "#d29922",
+};
+
+const TIER_BG: Record<string, string> = {
+  anon:               "#1c2128",
+  verified_no_attend: "#051d4d",
+  verified_attended:  "#051d4d",
+  same_state:         "#2d1f00",
+  same_org:           "#2d1700",
+  attended_one:       "#0f2d1a",
+  attended_both:      "#1c1507",
+};
+
 type IconProps = {
   s?: number;
   c?: string;
@@ -1403,7 +1443,7 @@ function VoteCard({ h, onVote, state, isIdle }: { h: Hackathon; onVote: (id: num
   );
 }
 
-function RankingRow({ h, i, expanded, onToggle }: { h: Hackathon; i: number; expanded: boolean; onToggle: () => void }) {
+function RankingRow({ h, i, wr, expanded, onToggle }: { h: Hackathon; i: number; wr: number; expanded: boolean; onToggle: () => void }) {
   return (
     <div style={{ borderBottom: `1px solid ${T.borderMuted}`, background: expanded ? T.bgHover : "transparent" }}>
       <div onClick={onToggle} style={{ display: "flex", alignItems: "center", padding: "10px 16px", cursor: "pointer" }}>
@@ -1425,10 +1465,10 @@ function RankingRow({ h, i, expanded, onToggle }: { h: Hackathon; i: number; exp
         <div style={{ width: 90, marginRight: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
             <span style={{ fontSize: 9, color: T.textSubtle, textTransform: "uppercase" }}>win rate</span>
-            <span style={{ fontSize: 10.5, color: T.greenLight, fontWeight: 600 }}>{winRate(h).toFixed(1)}%</span>
+            <span style={{ fontSize: 10.5, color: T.greenLight, fontWeight: 600 }}>{wr.toFixed(1)}%</span>
           </div>
           <div style={{ height: 4, borderRadius: 4, background: T.bgOverlay, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${winRate(h)}%`, background: `linear-gradient(90deg,${T.green},${T.greenLight})` }} />
+            <div style={{ height: "100%", width: `${Math.min(wr, 100)}%`, background: `linear-gradient(90deg,${T.green},${T.greenLight})` }} />
           </div>
         </div>
 
@@ -1794,6 +1834,8 @@ export default function RateHackathonsPage() {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [devpostModalOpen, setDevpostModalOpen] = useState(false);
   const [account, setAccount] = useState<AccountUser | null>(null);
+  const [lastVoteWeight, setLastVoteWeight] = useState<VoteWeight | null>(null);
+  const [scoreMap, setScoreMap] = useState<Record<number, HackathonScore>>({});
 
   const saveAccount = (user: AccountUser | null) => {
     setAccount(user);
@@ -1813,7 +1855,43 @@ export default function RateHackathonsPage() {
     } catch { /* ignore */ }
   }, []);
 
-  const sorted = useMemo(() => [...hackathons].sort((a, b) => winRate(b) - winRate(a)), [hackathons]);
+  // Fetch real weighted scores on mount.
+  // scoreMap drives ranking (weighted win rate); rawVotes is added to display counts.
+  useEffect(() => {
+    fetch("/api/scores")
+      .then((r) => r.json())
+      .then((data: { scores?: HackathonScore[] }) => {
+        if (!data.scores?.length) return;
+        const map: Record<number, HackathonScore> = {};
+        for (const s of data.scores) map[s.id] = s;
+        setScoreMap(map);
+        // Merge raw vote counts into display totals (one-time, seed+real)
+        setHackathons((prev) =>
+          prev.map((h) => {
+            const s = map[h.id];
+            if (!s?.rawVotes) return h;
+            return { ...h, votes: h.votes + s.rawVotes };
+          }),
+        );
+      })
+      .catch(() => { /* graceful degradation — static data stays */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Weighted win rate: uses real weighted scores when available, falls back to seed data.
+  const weightedWinRate = useCallback(
+    (h: Hackathon) => {
+      const s = scoreMap[h.id];
+      if (s && s.weightedVotes > 0) return (s.weightedWins / s.weightedVotes) * 100;
+      return winRate(h); // fallback to seed data when no real votes yet
+    },
+    [scoreMap],
+  );
+
+  const sorted = useMemo(
+    () => [...hackathons].sort((a, b) => weightedWinRate(b) - weightedWinRate(a)),
+    [hackathons, weightedWinRate],
+  );
 
   const handleVote = useCallback(
     (id: number) => {
@@ -1822,6 +1900,9 @@ export default function RateHackathonsPage() {
       setPhase("voted");
       setVotedId(id);
 
+      const loserId = pair.find((p) => p.id !== id)?.id ?? 0;
+
+      // Optimistic update — weight 1 in-session; real weighted value comes from API
       setHackathons((prev) =>
         prev.map((h) =>
           h.id === id
@@ -1834,9 +1915,46 @@ export default function RateHackathonsPage() {
 
       setStreak((s) => s + 1);
 
+      // Fire the weighted vote — update scoreMap + show tier indicator on success
+      fetch("/api/vote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ winnerId: id, loserId, voter: account?.username ?? "" }),
+      })
+        .then((r) => r.json())
+        .then((data: { weight?: number; tier?: string }) => {
+          if (data.weight === undefined || !data.tier) return;
+          const w = data.weight;
+          setLastVoteWeight({ weight: w, tier: data.tier });
+
+          // Optimistically update scoreMap so ranking reflects the new vote immediately
+          setScoreMap((prev) => {
+            const empty = (hid: number): HackathonScore => ({
+              id: hid, rawVotes: 0, weightedVotes: 0, weightedWins: 0, winRate: 0,
+            });
+            const winner = { ...(prev[id] ?? empty(id)) };
+            const loser  = { ...(prev[loserId] ?? empty(loserId)) };
+
+            winner.rawVotes      += 1;
+            winner.weightedVotes += w;
+            winner.weightedWins  += w;
+            winner.winRate = winner.weightedVotes > 0
+              ? (winner.weightedWins / winner.weightedVotes) * 100 : 0;
+
+            loser.rawVotes      += 1;
+            loser.weightedVotes += w;
+            loser.winRate = loser.weightedVotes > 0
+              ? (loser.weightedWins / loser.weightedVotes) * 100 : 0;
+
+            return { ...prev, [id]: winner, [loserId]: loser };
+          });
+        })
+        .catch(() => { /* graceful degradation */ });
+
       setTimeout(() => {
         setVisible(false);
         setTimeout(() => {
+          setLastVoteWeight(null);
           setPair(nextPair(hackathons, [id]));
           setVotedId(null);
           setPhase("idle");
@@ -1844,7 +1962,7 @@ export default function RateHackathonsPage() {
         }, 320);
       }, 950);
     },
-    [hackathons, pair, phase],
+    [hackathons, pair, phase, account],
   );
 
   const skip = () => {
@@ -1942,10 +2060,27 @@ export default function RateHackathonsPage() {
             <div style={{ display: "flex", gap: 16, alignItems: "stretch", justifyContent: "center", flexWrap: "wrap", opacity: visible ? 1 : 0, transform: visible ? "translateY(0)" : "translateY(-6px)", transition: "opacity .28s ease, transform .28s ease" }}>
               <VoteCard h={pair[0]} onVote={handleVote} state={votedId === pair[0].id ? "winner" : votedId ? "loser" : "idle"} isIdle={phase === "idle"} />
 
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: "20px 0" }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "20px 0" }}>
                 <div style={{ width: 36, height: 36, borderRadius: "50%", background: T.bgElevated, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: T.textSubtle }}>
                   vs
                 </div>
+                {lastVoteWeight && (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, animation: "rh-fade-up 0.3s ease" }}>
+                    <div style={{
+                      fontSize: 12, fontWeight: 700,
+                      color: TIER_COLORS[lastVoteWeight.tier] ?? T.textMuted,
+                      background: TIER_BG[lastVoteWeight.tier] ?? T.bgOverlay,
+                      border: `1px solid ${TIER_COLORS[lastVoteWeight.tier] ?? T.border}33`,
+                      borderRadius: 20, padding: "3px 10px",
+                      letterSpacing: "0.01em",
+                    }}>
+                      {lastVoteWeight.weight.toFixed(1)}× weight
+                    </div>
+                    <div style={{ fontSize: 10, color: T.textSubtle, textAlign: "center", maxWidth: 80 }}>
+                      {TIER_LABELS[lastVoteWeight.tier] ?? lastVoteWeight.tier}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <VoteCard h={pair[1]} onVote={handleVote} state={votedId === pair[1].id ? "winner" : votedId ? "loser" : "idle"} isIdle={phase === "idle"} />
@@ -1976,7 +2111,7 @@ export default function RateHackathonsPage() {
               </div>
 
               {sorted.map((h, i) => (
-                <RankingRow key={h.id} h={h} i={i} expanded={expanded === h.id} onToggle={() => setExpanded(expanded === h.id ? null : h.id)} />
+                <RankingRow key={h.id} h={h} i={i} wr={weightedWinRate(h)} expanded={expanded === h.id} onToggle={() => setExpanded(expanded === h.id ? null : h.id)} />
               ))}
             </div>
           </div>

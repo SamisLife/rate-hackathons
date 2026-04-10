@@ -5,8 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
+	"math"
 	"math/big"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -88,6 +93,11 @@ var wordList = []string{
 	"witch", "witty", "woken", "world", "wreck", "wrist", "yacht", "yearn",
 	"yield", "young", "zappy", "zebra", "zenith", "zesty", "zilch", "zippy",
 }
+
+// nonAlphaRe strips everything except lowercase letters — used for hackathon
+// name normalization so "HackMIT 2024", "Hack MIT", "MLH HackMIT" all collapse
+// to the same canonical form for comparison.
+var nonAlphaRe = regexp.MustCompile(`[^a-z]+`)
 
 func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -649,6 +659,450 @@ func projectsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── Voting system ─────────────────────────────────────────────────────────────
+//
+// DATA_DIR is resolved once at startup.
+// Override with the DATA_DIR env-var when deploying (e.g. point at a mounted
+// volume or swap the whole VoteRepository for a DB-backed implementation).
+var dataDir = func() string {
+	if d := os.Getenv("DATA_DIR"); d != "" {
+		return d
+	}
+	return filepath.Join("..", "..", "frontend", "data")
+}()
+
+// staticHackathon mirrors the fields we need from hackathons.json.
+type staticHackathon struct {
+	ID      int      `json:"id"`
+	Name    string   `json:"name"`
+	Org     string   `json:"org"`
+	City    string   `json:"city"`
+	State   string   `json:"state"`
+	Aliases []string `json:"aliases"`
+}
+
+// attendanceCacheEntry mirrors a per-user entry in attended_hackathons.json.
+type attendanceCacheEntry struct {
+	DevpostUsername string             `json:"devpostUsername"`
+	CachedAt        string             `json:"cachedAt"`
+	Hackathons      []ScrapedHackathon `json:"hackathons"`
+}
+
+// Vote is a single persisted vote record.
+type Vote struct {
+	ID        string    `json:"id"`
+	WinnerID  int       `json:"winnerId"`
+	LoserID   int       `json:"loserId"`
+	Weight    float64   `json:"weight"`
+	Tier      string    `json:"tier"`
+	Voter     string    `json:"voter"` // empty for anonymous
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// VotesFile is the on-disk shape of votes.json.
+type VotesFile struct {
+	Votes []Vote `json:"votes"`
+}
+
+// HackathonScore is the aggregated weighted result for one hackathon.
+type HackathonScore struct {
+	ID            int     `json:"id"`
+	RawVotes      int     `json:"rawVotes"`      // integer count of votes cast (for display)
+	WeightedVotes float64 `json:"weightedVotes"` // sum of weights (for ranking)
+	WeightedWins  float64 `json:"weightedWins"`  // sum of winner weights (for ranking)
+	WinRate       float64 `json:"winRate"`        // weightedWins/weightedVotes×100
+}
+
+// ── VoteRepository abstraction ────────────────────────────────────────────────
+//
+// Swap the JSON store for any DB by implementing this two-method interface.
+
+type VoteRepository interface {
+	SaveVote(v Vote) error
+	Scores() ([]HackathonScore, error)
+}
+
+// ── JSON (flat-file) implementation ──────────────────────────────────────────
+
+type jsonVoteRepo struct {
+	mu        sync.Mutex
+	votesPath string
+}
+
+func newJSONVoteRepo(dir string) *jsonVoteRepo {
+	return &jsonVoteRepo{votesPath: filepath.Join(dir, "votes.json")}
+}
+
+func (r *jsonVoteRepo) readLocked() (VotesFile, error) {
+	data, err := os.ReadFile(r.votesPath)
+	if os.IsNotExist(err) {
+		return VotesFile{Votes: []Vote{}}, nil
+	}
+	if err != nil {
+		return VotesFile{}, err
+	}
+	var vf VotesFile
+	return vf, json.Unmarshal(data, &vf)
+}
+
+func (r *jsonVoteRepo) writeLocked(vf VotesFile) error {
+	if err := os.MkdirAll(filepath.Dir(r.votesPath), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(vf, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(r.votesPath, data, 0o644)
+}
+
+func (r *jsonVoteRepo) SaveVote(v Vote) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	vf, err := r.readLocked()
+	if err != nil {
+		return err
+	}
+	vf.Votes = append(vf.Votes, v)
+	return r.writeLocked(vf)
+}
+
+func (r *jsonVoteRepo) Scores() ([]HackathonScore, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	vf, err := r.readLocked()
+	if err != nil {
+		return nil, err
+	}
+
+	type agg struct {
+		wins     float64
+		total    float64
+		rawVotes int
+	}
+	m := make(map[int]*agg)
+	ensure := func(id int) {
+		if m[id] == nil {
+			m[id] = &agg{}
+		}
+	}
+	for _, v := range vf.Votes {
+		ensure(v.WinnerID)
+		ensure(v.LoserID)
+		m[v.WinnerID].wins += v.Weight
+		m[v.WinnerID].total += v.Weight
+		m[v.WinnerID].rawVotes++
+		m[v.LoserID].total += v.Weight
+		m[v.LoserID].rawVotes++
+	}
+
+	scores := make([]HackathonScore, 0, len(m))
+	for id, a := range m {
+		wr := 0.0
+		if a.total > 0 {
+			wr = (a.wins / a.total) * 100
+		}
+		scores = append(scores, HackathonScore{
+			ID:            id,
+			RawVotes:      a.rawVotes,
+			WeightedVotes: math.Round(a.total*100) / 100,
+			WeightedWins:  math.Round(a.wins*100) / 100,
+			WinRate:       math.Round(wr*100) / 100,
+		})
+	}
+	return scores, nil
+}
+
+// ── Weight algorithm ──────────────────────────────────────────────────────────
+//
+// Tier hierarchy (lowest → highest credibility):
+//
+//   anon                  0.30  visitor with no account
+//   verified_no_attend    0.60  logged-in + Devpost-linked, never attended a hackathon
+//   verified_attended     0.80  logged-in, attended at least one hackathon (anywhere)
+//   same_state            1.00  attended a hackathon in the same state as either target
+//   same_org              1.20  attended a different hackathon at the same university/org
+//   attended_one          1.50  attended exactly one of the two hackathons being compared
+//   attended_both         2.20  attended both hackathons being compared (highest trust)
+//
+// Tiers are mutually exclusive; the highest applicable tier wins.
+
+const (
+	TierAnon             = "anon"
+	TierVerifiedNoAttend = "verified_no_attend"
+	TierVerifiedAttended = "verified_attended"
+	TierSameState        = "same_state"
+	TierSameOrg          = "same_org"
+	TierAttendedOne      = "attended_one"
+	TierAttendedBoth     = "attended_both"
+)
+
+var tierWeights = map[string]float64{
+	TierAnon:             0.30,
+	TierVerifiedNoAttend: 0.60,
+	TierVerifiedAttended: 0.80,
+	TierSameState:        1.00,
+	TierSameOrg:          1.20,
+	TierAttendedOne:      1.50,
+	TierAttendedBoth:     2.20,
+}
+
+func loadStaticHackathons(dir string) ([]staticHackathon, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "hackathons.json"))
+	if err != nil {
+		return nil, err
+	}
+	var hacks []staticHackathon
+	return hacks, json.Unmarshal(data, &hacks)
+}
+
+func loadAttendanceCache(dir string) (map[string]attendanceCacheEntry, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "attended_hackathons.json"))
+	if os.IsNotExist(err) {
+		return map[string]attendanceCacheEntry{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var ac map[string]attendanceCacheEntry
+	return ac, json.Unmarshal(data, &ac)
+}
+
+// normHackName strips all non-letter characters and lowercases, so
+// "HackMIT 2024", "Hack MIT", "MLH HackMIT" all become "hackmit".
+func normHackName(s string) string {
+	return nonAlphaRe.ReplaceAllString(strings.ToLower(s), "")
+}
+
+// matchesAliases returns true if scrapedName normalises to contain (or equal)
+// any of the explicit aliases stored in hackathons.json.
+// Using explicit aliases eliminates the false-positive/negative issues from
+// purely fuzzy substring matching.
+func matchesAliases(aliases []string, scrapedName string) bool {
+	normScraped := normHackName(scrapedName)
+	if normScraped == "" {
+		return false
+	}
+	for _, alias := range aliases {
+		normAlias := normHackName(alias)
+		if normAlias == "" {
+			continue
+		}
+		if normScraped == normAlias ||
+			strings.Contains(normScraped, normAlias) ||
+			strings.Contains(normAlias, normScraped) {
+			return true
+		}
+	}
+	return false
+}
+
+// orgMatch checks whether a scraped hackathon name is associated with the
+// given org/university. It uses two strategies:
+//  1. The org string appears as a substring of the normalised scraped name.
+//  2. The scraped name matches any alias of any hackathon that shares the org
+//     (catches names like "HackNY" whose org is "NYU" — "nyu" ∉ "hackny").
+func orgMatch(allHacks []staticHackathon, targetOrg, scrapedName string) bool {
+	if len(targetOrg) < 2 || scrapedName == "" {
+		return false
+	}
+	normOrg := normHackName(targetOrg)
+	normName := normHackName(scrapedName)
+
+	// Strategy 1: org keyword present in scraped name
+	if strings.Contains(normName, normOrg) {
+		return true
+	}
+	// Strategy 2: scraped name matches an alias of a same-org hackathon
+	normOrgLower := strings.ToLower(strings.TrimSpace(targetOrg))
+	for _, h := range allHacks {
+		if strings.ToLower(strings.TrimSpace(h.Org)) != normOrgLower {
+			continue
+		}
+		if matchesAliases(h.Aliases, scrapedName) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractState returns the two-letter US state abbreviation from a location
+// string like "Cambridge, MA" or "New York, NY, USA".
+// Scans comma-separated parts right-to-left for the first 2-letter segment.
+func extractState(location string) string {
+	parts := strings.Split(location, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		s := strings.ToUpper(strings.TrimSpace(parts[i]))
+		if len(s) == 2 && s[0] >= 'A' && s[0] <= 'Z' && s[1] >= 'A' && s[1] <= 'Z' {
+			return s
+		}
+	}
+	return ""
+}
+
+// WeightResult is the output of ComputeWeight.
+type WeightResult struct {
+	Weight float64 `json:"weight"`
+	Tier   string  `json:"tier"`
+}
+
+// ComputeWeight determines the credibility weight for a vote.
+// voterUsername is empty for anonymous voters.
+// hackAID / hackBID are the integer IDs from hackathons.json.
+func ComputeWeight(voterUsername string, hackAID, hackBID int) WeightResult {
+	fallback := func(tier string) WeightResult {
+		return WeightResult{Weight: tierWeights[tier], Tier: tier}
+	}
+
+	// ── Anonymous ────────────────────────────────────────────────────────────
+	if voterUsername == "" {
+		return fallback(TierAnon)
+	}
+
+	// ── Load reference data ───────────────────────────────────────────────────
+	hacks, err := loadStaticHackathons(dataDir)
+	if err != nil {
+		return fallback(TierVerifiedNoAttend)
+	}
+	var hackA, hackB *staticHackathon
+	for i := range hacks {
+		switch hacks[i].ID {
+		case hackAID:
+			hackA = &hacks[i]
+		case hackBID:
+			hackB = &hacks[i]
+		}
+	}
+	if hackA == nil || hackB == nil {
+		return fallback(TierVerifiedNoAttend)
+	}
+
+	// ── Load voter attendance ─────────────────────────────────────────────────
+	ac, err := loadAttendanceCache(dataDir)
+	if err != nil {
+		return fallback(TierVerifiedNoAttend)
+	}
+	entry, ok := ac[voterUsername]
+	if !ok || len(entry.Hackathons) == 0 {
+		// Logged-in user with no cached attendance = never attended anything
+		return fallback(TierVerifiedNoAttend)
+	}
+	attended := entry.Hackathons
+
+	// ── Tier: attended_both / attended_one ───────────────────────────────────
+	// Uses explicit aliases from hackathons.json for precise matching.
+	var attendedA, attendedB bool
+	for _, h := range attended {
+		if matchesAliases(hackA.Aliases, h.Name) {
+			attendedA = true
+		}
+		if matchesAliases(hackB.Aliases, h.Name) {
+			attendedB = true
+		}
+	}
+	if attendedA && attendedB {
+		return fallback(TierAttendedBoth)
+	}
+	if attendedA || attendedB {
+		return fallback(TierAttendedOne)
+	}
+
+	// ── Tier: same_org ───────────────────────────────────────────────────────
+	// Attended a different hackathon at the same university as hackA or hackB.
+	for _, h := range attended {
+		// Skip if this was the same hackathon (guarded by alias check above, but be safe)
+		if matchesAliases(hackA.Aliases, h.Name) || matchesAliases(hackB.Aliases, h.Name) {
+			continue
+		}
+		if orgMatch(hacks, hackA.Org, h.Name) || orgMatch(hacks, hackB.Org, h.Name) {
+			return fallback(TierSameOrg)
+		}
+	}
+
+	// ── Tier: same_state ─────────────────────────────────────────────────────
+	for _, h := range attended {
+		state := extractState(h.Location)
+		if state == "" {
+			continue
+		}
+		if state == hackA.State || state == hackB.State {
+			return fallback(TierSameState)
+		}
+	}
+
+	// ── Tier: verified_attended ──────────────────────────────────────────────
+	// Logged-in user who has attended at least one hackathon (just not a relevant one).
+	return fallback(TierVerifiedAttended)
+}
+
+// newVoteID returns a random 16-hex-char vote identifier.
+func newVoteID() string {
+	b := make([]byte, 8)
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%x", b)
+}
+
+// voteRepo is the active VoteRepository.
+// To swap to a DB in production, replace with a DB-backed VoteRepository.
+var voteRepo VoteRepository = newJSONVoteRepo(dataDir)
+
+// POST /vote
+// Body: { "winnerId": 1, "loserId": 2, "voter": "username-or-empty" }
+// Response: { "ok": true, "weight": 1.2, "tier": "attended_one" }
+func voteHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "use POST"})
+		return
+	}
+
+	var body struct {
+		WinnerID int    `json:"winnerId"`
+		LoserID  int    `json:"loserId"`
+		Voter    string `json:"voter"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.WinnerID == 0 || body.LoserID == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "winnerId and loserId are required"})
+		return
+	}
+
+	voter := strings.ToLower(strings.TrimSpace(body.Voter))
+	wr := ComputeWeight(voter, body.WinnerID, body.LoserID)
+
+	v := Vote{
+		ID:        newVoteID(),
+		WinnerID:  body.WinnerID,
+		LoserID:   body.LoserID,
+		Weight:    wr.Weight,
+		Tier:      wr.Tier,
+		Voter:     voter,
+		CreatedAt: time.Now().UTC(),
+	}
+
+	if err := voteRepo.SaveVote(v); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save vote"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":     true,
+		"weight": wr.Weight,
+		"tier":   wr.Tier,
+	})
+}
+
+// GET /scores
+// Response: { "scores": [{ "id": 1, "weightedVotes": 4.2, "weightedWins": 2.8, "winRate": 66.67 }] }
+func scoresHandler(w http.ResponseWriter, r *http.Request) {
+	scores, err := voteRepo.Scores()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load scores"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"scores": scores})
+}
+
 func main() {
 	http.HandleFunc("/health", withCORS(healthHandler))
 	http.HandleFunc("/bio", withCORS(bioHandler))
@@ -656,6 +1110,8 @@ func main() {
 	http.HandleFunc("/verify", withCORS(verifyHandler))
 	http.HandleFunc("/hackathons", withCORS(hackathonsHandler))
 	http.HandleFunc("/projects", withCORS(projectsHandler))
+	http.HandleFunc("/vote", withCORS(voteHandler))
+	http.HandleFunc("/scores", withCORS(scoresHandler))
 
 	fmt.Println("Server running on http://localhost:8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
