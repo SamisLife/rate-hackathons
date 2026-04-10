@@ -181,6 +181,10 @@ export default function ProfilePage() {
         @keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes profile-glow { 0%, 100% { box-shadow: 0 0 0 0 #1f6feb22; } 50% { box-shadow: 0 0 0 8px #1f6feb08; } }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes winner-glow { 0%, 100% { box-shadow: 0 0 10px 0 #d2992200; } 50% { box-shadow: 0 0 24px 3px #d2992228; } }
+        @keyframes winner-shine { 0% { transform: translateX(-100%); } 55%, 100% { transform: translateX(550%); } }
+        @keyframes badge-pulse { 0%, 100% { box-shadow: 0 0 0 0 #d2992240; } 50% { box-shadow: 0 0 7px 2px #d2992220; } }
+        @keyframes star-twinkle { 0%, 100% { transform: scale(1) rotate(0deg); } 50% { transform: scale(1.3) rotate(18deg); } }
       `}</style>
 
       {/* Header */}
@@ -313,9 +317,9 @@ export default function ProfilePage() {
                         href={p.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        style={{ borderRadius: 10, border: `1px solid ${T.border}`, background: T.bgOverlay, overflow: "hidden", textDecoration: "none", display: "flex", flexDirection: "column", transition: "border-color 0.15s, transform 0.15s" }}
-                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.blue + "55"; e.currentTarget.style.transform = "translateY(-1px)"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.transform = "translateY(0)"; }}
+                        style={{ borderRadius: 10, border: `1px solid ${p.isWinner ? "#3d2e0a" : T.border}`, background: p.isWinner ? "#0f0c03" : T.bgOverlay, overflow: "hidden", textDecoration: "none", display: "flex", flexDirection: "column", transition: "border-color 0.15s, transform 0.15s", animation: p.isWinner ? "winner-glow 2.5s ease-in-out infinite" : "none" }}
+                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = p.isWinner ? "#d2992255" : T.blue + "55"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.isWinner ? "#3d2e0a" : T.border; e.currentTarget.style.transform = "translateY(0)"; }}
                       >
                         {/* Thumbnail */}
                         <div style={{ position: "relative", width: "100%", aspectRatio: "16/9", background: T.bg, overflow: "hidden", flexShrink: 0 }}>
@@ -326,10 +330,14 @@ export default function ProfilePage() {
                               <span style={{ fontSize: 22, fontWeight: 800, color: T.textSubtle }}>{p.name.slice(0, 2).toUpperCase()}</span>
                             </div>
                           )}
+                          {/* Winner shine sweep */}
+                          {p.isWinner && (
+                            <div style={{ position: "absolute", top: 0, left: 0, width: "38%", height: "100%", background: "linear-gradient(105deg, transparent 30%, rgba(210,153,34,0.13) 50%, transparent 70%)", animation: "winner-shine 3.5s ease-in-out infinite", pointerEvents: "none", zIndex: 1 }} />
+                          )}
                           {/* Winner ribbon */}
                           {p.isWinner && (
-                            <div style={{ position: "absolute", top: 8, right: 8, display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 20, background: "#1c1507dd", border: "1px solid #3d2e0a", backdropFilter: "blur(6px)" }}>
-                              <svg width="9" height="9" viewBox="0 0 24 24" fill={T.amber}><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                            <div style={{ position: "absolute", top: 8, right: 8, display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 20, background: "#1c1507dd", border: "1px solid #3d2e0a", backdropFilter: "blur(6px)", animation: "badge-pulse 2s ease-in-out infinite", zIndex: 2 }}>
+                              <svg width="9" height="9" viewBox="0 0 24 24" fill={T.amber} style={{ animation: "star-twinkle 2s ease-in-out infinite" }}><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
                               <span style={{ fontSize: 9, fontWeight: 700, color: T.amber, letterSpacing: "0.04em", textTransform: "uppercase" }}>Winner</span>
                             </div>
                           )}
@@ -395,9 +403,9 @@ export default function ProfilePage() {
                           href={h.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          style={{ display: "flex", gap: 14, alignItems: "flex-start", padding: "14px 20px", borderBottom: i < hackathons.length - 1 ? `1px solid ${T.borderMuted}` : "none", textDecoration: "none", transition: "background 0.12s ease" }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = T.bgOverlay; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                          style={{ display: "flex", gap: 14, alignItems: "flex-start", padding: "14px 20px", paddingLeft: won ? 17 : 20, borderBottom: i < hackathons.length - 1 ? `1px solid ${T.borderMuted}` : "none", borderLeft: `3px solid ${won ? "#d2992245" : "transparent"}`, background: won ? "#0b090100" : "transparent", textDecoration: "none", transition: "background 0.12s ease, border-left-color 0.2s" }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = won ? "#110d03" : T.bgOverlay; if (won) e.currentTarget.style.borderLeftColor = "#d2992270"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = won ? "#0b090100" : "transparent"; if (won) e.currentTarget.style.borderLeftColor = "#d2992245"; }}
                         >
                           {/* Logo */}
                           <div style={{ width: 52, height: 52, borderRadius: 10, border: `1px solid ${T.border}`, background: T.bgOverlay, overflow: "hidden", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -413,8 +421,8 @@ export default function ProfilePage() {
                             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
                               <span style={{ fontSize: 13, fontWeight: 700, color: T.text, letterSpacing: "-0.02em" }}>{h.name}</span>
                               {won && (
-                                <div style={{ display: "flex", alignItems: "center", gap: 3, padding: "1px 7px", borderRadius: 20, background: "#1c1507", border: "1px solid #3d2e0a" }}>
-                                  <svg width="8" height="8" viewBox="0 0 24 24" fill={T.amber}><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                                <div style={{ display: "flex", alignItems: "center", gap: 3, padding: "1px 7px", borderRadius: 20, background: "#1c1507", border: "1px solid #3d2e0a", animation: "badge-pulse 2s ease-in-out infinite" }}>
+                                  <svg width="8" height="8" viewBox="0 0 24 24" fill={T.amber} style={{ animation: "star-twinkle 2s ease-in-out infinite" }}><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
                                   <span style={{ fontSize: 9, fontWeight: 700, color: T.amber, letterSpacing: "0.04em", textTransform: "uppercase" }}>Won</span>
                                 </div>
                               )}
