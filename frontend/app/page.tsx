@@ -595,7 +595,7 @@ function DevpostLinkModal({
   const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const API_BASE = "http://localhost:8080";
+  const API_BASE = "/api";
 
   const handleClose = () => {
     setStage("input");
