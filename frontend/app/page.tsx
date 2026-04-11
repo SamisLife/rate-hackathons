@@ -17,6 +17,7 @@ type Hackathon = {
   name: string;
   org: string;
   city: string;
+  state: string;
   prize: string;
   size: string;
   votes: number;
