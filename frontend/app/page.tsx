@@ -142,10 +142,103 @@ function shuffle<TValue>(arr: TValue[]) {
   return copy;
 }
 
-function nextPair(list: Hackathon[], exclude: number[] = []): [Hackathon, Hackathon] {
-  const pool = list.filter((h) => !exclude.includes(h.id));
-  const picked = shuffle(pool.length >= 2 ? pool : list);
-  return [picked[0], picked[1]];
+function normHackName(s: string): string {
+  return s.toLowerCase().replace(/[^a-z]/g, "");
+}
+
+function matchesHackathon(hackName: string, scrapedName: string): boolean {
+  const a = normHackName(hackName);
+  const b = normHackName(scrapedName);
+  if (!a || !b) return false;
+  return a === b || b.includes(a) || a.includes(b);
+}
+
+function pairKey(a: number, b: number): string {
+  return `${Math.min(a, b)}-${Math.max(a, b)}`;
+}
+
+// Smart pairing — 4 phases, each exhausting before the next:
+//   1. attended ↔ attended         (user knows both — highest value)
+//   2. attended ↔ same-state       (user likely familiar, capped appearances)
+//   3. area ↔ area                 (all hackathons in user's attended states)
+//   4. random unseen               (anywhere, fully open)
+//
+// `appearances` counts how many times each hackathon has been shown.
+// Phases 2+ respect MAX_APPEARANCES so one hackathon can't dominate.
+const MAX_APPEARANCES = 3;
+
+function nextPair(
+  list: Hackathon[],
+  attendedIds: number[],
+  seen: Set<string>,
+  appearances: Map<number, number>,
+  exclude: number[] = [],
+): [Hackathon, Hackathon] {
+  const src = list.filter((h) => !exclude.includes(h.id));
+  const pool = src.length >= 2 ? src : list;
+
+  const appeared  = (h: Hackathon) => appearances.get(h.id) ?? 0;
+  const fresh     = (h: Hackathon) => appeared(h) < MAX_APPEARANCES;
+  const unseen    = (a: Hackathon, b: Hackathon) => !seen.has(pairKey(a.id, b.id));
+  const pickRandom = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+
+  const record = (a: Hackathon, b: Hackathon) => {
+    seen.add(pairKey(a.id, b.id));
+    appearances.set(a.id, appeared(a) + 1);
+    appearances.set(b.id, appeared(b) + 1);
+  };
+
+  const attended    = pool.filter((h) =>  attendedIds.includes(h.id));
+  const nonAttended = pool.filter((h) => !attendedIds.includes(h.id));
+  const attendedStates = new Set(attended.map((h) => h.state));
+
+  // Builds a randomly-ordered candidate list from two pools (no nested-loop bias).
+  const buildPairs = (left: Hackathon[], right: Hackathon[]): [Hackathon, Hackathon][] => {
+    const pairs: [Hackathon, Hackathon][] = [];
+    const sl = shuffle(left);
+    const sr = shuffle(right);
+    for (const a of sl)
+      for (const b of sr)
+        if (a.id !== b.id && a.id < b.id && unseen(a, b))
+          pairs.push([a, b]);
+    return shuffle(pairs); // shuffle the pairs list itself too
+  };
+
+  // Phase 1: attended vs attended (no cap — highest value)
+  if (attended.length >= 2) {
+    const p1 = buildPairs(attended, attended);
+    if (p1.length) { record(p1[0][0], p1[0][1]); return p1[0]; }
+  }
+
+  // Phase 2: attended vs same-state non-attended (appearance-capped)
+  if (attended.length >= 1) {
+    const attFresh   = attended.filter(fresh);
+    const sameState  = nonAttended.filter((h) => attendedStates.has(h.state) && fresh(h));
+    const p2 = buildPairs(attFresh, sameState).filter(([a, b]) => unseen(a, b));
+    if (p2.length) { record(p2[0][0], p2[0][1]); return p2[0]; }
+  }
+
+  // Phase 3: all hackathons in attended states vs each other (appearance-capped)
+  if (attendedStates.size > 0) {
+    const areaPool = shuffle(pool.filter((h) => attendedStates.has(h.state) && fresh(h)));
+    const p3 = buildPairs(areaPool, areaPool);
+    if (p3.length) { record(p3[0][0], p3[0][1]); return p3[0]; }
+  }
+
+  // Phase 4: fully random unseen pairs — appearances reset incrementally so
+  // the least-seen hackathons get priority, avoiding reruns.
+  const byAppearances = shuffle(pool).sort((a, b) => appeared(a) - appeared(b));
+  for (const h of byAppearances) {
+    const others = shuffle(pool.filter((o) => o.id !== h.id && unseen(h, o)));
+    if (others.length) { record(h, others[0]); return [h, others[0]]; }
+  }
+
+  // Absolute fallback — all pairs seen, reset and start fresh
+  seen.clear();
+  appearances.clear();
+  const reset = shuffle(pool);
+  record(reset[0], reset[1]);
+  return [reset[0], reset[1]];
 }
 
 function getInitials(name: string) {
@@ -1460,7 +1553,7 @@ function RankingRow({ h, i, wr, expanded, onToggle }: { h: Hackathon; i: number;
           <Chip icon={Ico.Plane} label="Travel" available={h.reimbursement} type="blue" compact />
         </div>
 
-        <div style={{ width: 64, marginRight: 16, fontSize: 11, color: T.textSubtle }}>{(h.votes / 1000).toFixed(1)}k</div>
+        <div style={{ width: 64, marginRight: 16, fontSize: 11, color: T.textSubtle }}>{h.votes >= 1000 ? `${(h.votes / 1000).toFixed(1)}k` : h.votes} votes</div>
 
         <div style={{ width: 90, marginRight: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
@@ -1834,18 +1927,17 @@ export default function RateHackathonsPage() {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [devpostModalOpen, setDevpostModalOpen] = useState(false);
   const [account, setAccount] = useState<AccountUser | null>(null);
+  const [attendedIds, setAttendedIds] = useState<number[]>([]);
   const [lastVoteWeight, setLastVoteWeight] = useState<VoteWeight | null>(null);
   const [scoreMap, setScoreMap] = useState<Record<number, HackathonScore>>({});
+  const seenPairs    = useRef<Set<string>>(new Set());
+  const appearances  = useRef<Map<number, number>>(new Map());
 
   const saveAccount = (user: AccountUser | null) => {
     setAccount(user);
     if (user) localStorage.setItem("rh_account", JSON.stringify(user));
     else localStorage.removeItem("rh_account");
   };
-
-  useEffect(() => {
-    setPair(nextPair(DATA));
-  }, []);
 
   // Restore session from localStorage after hydration (client-only)
   useEffect(() => {
@@ -1854,6 +1946,35 @@ export default function RateHackathonsPage() {
       if (stored) setAccount(JSON.parse(stored) as AccountUser);
     } catch { /* ignore */ }
   }, []);
+
+  // Fetch attended hackathon IDs when account changes — then reset and re-pick
+  // the first pair so the algorithm starts with full context (not empty attendedIds).
+  useEffect(() => {
+    if (!account) {
+      setAttendedIds([]);
+      seenPairs.current.clear();
+      appearances.current.clear();
+      setPair(nextPair(DATA, [], seenPairs.current, appearances.current));
+      return;
+    }
+    fetch(`/api/users/${encodeURIComponent(account.username)}/hackathons`)
+      .then((r) => r.json())
+      .then((data: { hackathons?: { name: string }[] }) => {
+        const ids = data.hackathons?.length
+          ? DATA.filter((h) => data.hackathons!.some((s) => matchesHackathon(h.name, s.name))).map((h) => h.id)
+          : [];
+        setAttendedIds(ids);
+        // Reset session state so the very first pair is chosen by the algorithm
+        seenPairs.current.clear();
+        appearances.current.clear();
+        setPair(nextPair(DATA, ids, seenPairs.current, appearances.current));
+      })
+      .catch(() => {
+        seenPairs.current.clear();
+        appearances.current.clear();
+        setPair(nextPair(DATA, [], seenPairs.current, appearances.current));
+      });
+  }, [account?.username]);
 
   // Fetch real weighted scores on mount.
   // scoreMap drives ranking (weighted win rate); rawVotes is added to display counts.
@@ -1955,21 +2076,21 @@ export default function RateHackathonsPage() {
         setVisible(false);
         setTimeout(() => {
           setLastVoteWeight(null);
-          setPair(nextPair(hackathons, [id]));
+          setPair(nextPair(hackathons, attendedIds, seenPairs.current, appearances.current, [id]));
           setVotedId(null);
           setPhase("idle");
           setVisible(true);
         }, 320);
       }, 950);
     },
-    [hackathons, pair, phase, account],
+    [hackathons, pair, phase, account, attendedIds],
   );
 
   const skip = () => {
     if (phase !== "idle") return;
     setVisible(false);
     setTimeout(() => {
-      setPair(nextPair(hackathons));
+      setPair(nextPair(hackathons, attendedIds, seenPairs.current, appearances.current));
       setVisible(true);
     }, 320);
   };
@@ -2074,11 +2195,13 @@ export default function RateHackathonsPage() {
                       borderRadius: 20, padding: "3px 10px",
                       letterSpacing: "0.01em",
                     }}>
-                      {lastVoteWeight.weight.toFixed(1)}× weight
+                      x{lastVoteWeight.weight % 1 === 0 ? lastVoteWeight.weight.toFixed(0) : lastVoteWeight.weight.toFixed(1)}
                     </div>
-                    <div style={{ fontSize: 10, color: T.textSubtle, textAlign: "center", maxWidth: 80 }}>
-                      {TIER_LABELS[lastVoteWeight.tier] ?? lastVoteWeight.tier}
-                    </div>
+                    {lastVoteWeight.tier === "anon" && (
+                      <div style={{ fontSize: 10, color: T.textSubtle, textAlign: "center", maxWidth: 80 }}>
+                        anonymous
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

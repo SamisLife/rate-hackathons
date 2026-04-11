@@ -673,12 +673,11 @@ var dataDir = func() string {
 
 // staticHackathon mirrors the fields we need from hackathons.json.
 type staticHackathon struct {
-	ID      int      `json:"id"`
-	Name    string   `json:"name"`
-	Org     string   `json:"org"`
-	City    string   `json:"city"`
-	State   string   `json:"state"`
-	Aliases []string `json:"aliases"`
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Org   string `json:"org"`
+	City  string `json:"city"`
+	State string `json:"state"`
 }
 
 // attendanceCacheEntry mirrors a per-user entry in attended_hackathons.json.
@@ -874,27 +873,17 @@ func normHackName(s string) string {
 	return nonAlphaRe.ReplaceAllString(strings.ToLower(s), "")
 }
 
-// matchesAliases returns true if scrapedName normalises to contain (or equal)
-// any of the explicit aliases stored in hackathons.json.
-// Using explicit aliases eliminates the false-positive/negative issues from
-// purely fuzzy substring matching.
-func matchesAliases(aliases []string, scrapedName string) bool {
+// matchesName returns true if hackName normalises to equal or be contained in
+// scrapedName (or vice versa). Strips all non-letter characters before comparing.
+func matchesName(hackName, scrapedName string) bool {
+	normHack := normHackName(hackName)
 	normScraped := normHackName(scrapedName)
-	if normScraped == "" {
+	if normHack == "" || normScraped == "" {
 		return false
 	}
-	for _, alias := range aliases {
-		normAlias := normHackName(alias)
-		if normAlias == "" {
-			continue
-		}
-		if normScraped == normAlias ||
-			strings.Contains(normScraped, normAlias) ||
-			strings.Contains(normAlias, normScraped) {
-			return true
-		}
-	}
-	return false
+	return normScraped == normHack ||
+		strings.Contains(normScraped, normHack) ||
+		strings.Contains(normHack, normScraped)
 }
 
 // orgMatch checks whether a scraped hackathon name is associated with the
@@ -913,13 +902,13 @@ func orgMatch(allHacks []staticHackathon, targetOrg, scrapedName string) bool {
 	if strings.Contains(normName, normOrg) {
 		return true
 	}
-	// Strategy 2: scraped name matches an alias of a same-org hackathon
+	// Strategy 2: scraped name matches the name of a same-org hackathon
 	normOrgLower := strings.ToLower(strings.TrimSpace(targetOrg))
 	for _, h := range allHacks {
 		if strings.ToLower(strings.TrimSpace(h.Org)) != normOrgLower {
 			continue
 		}
-		if matchesAliases(h.Aliases, scrapedName) {
+		if matchesName(h.Name, scrapedName) {
 			return true
 		}
 	}
@@ -990,13 +979,12 @@ func ComputeWeight(voterUsername string, hackAID, hackBID int) WeightResult {
 	attended := entry.Hackathons
 
 	// ── Tier: attended_both / attended_one ───────────────────────────────────
-	// Uses explicit aliases from hackathons.json for precise matching.
 	var attendedA, attendedB bool
 	for _, h := range attended {
-		if matchesAliases(hackA.Aliases, h.Name) {
+		if matchesName(hackA.Name, h.Name) {
 			attendedA = true
 		}
-		if matchesAliases(hackB.Aliases, h.Name) {
+		if matchesName(hackB.Name, h.Name) {
 			attendedB = true
 		}
 	}
@@ -1010,8 +998,8 @@ func ComputeWeight(voterUsername string, hackAID, hackBID int) WeightResult {
 	// ── Tier: same_org ───────────────────────────────────────────────────────
 	// Attended a different hackathon at the same university as hackA or hackB.
 	for _, h := range attended {
-		// Skip if this was the same hackathon (guarded by alias check above, but be safe)
-		if matchesAliases(hackA.Aliases, h.Name) || matchesAliases(hackB.Aliases, h.Name) {
+		// Skip if this was the same hackathon (guarded by name check above, but be safe)
+		if matchesName(hackA.Name, h.Name) || matchesName(hackB.Name, h.Name) {
 			continue
 		}
 		if orgMatch(hacks, hackA.Org, h.Name) || orgMatch(hacks, hackB.Org, h.Name) {
