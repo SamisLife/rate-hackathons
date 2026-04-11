@@ -566,6 +566,8 @@ function DevpostLinkModal({
   onLinked: (user: AccountUser) => void;
 }) {
   type Stage = "input" | "challenge" | "success" | "registered" | "login";
+  type ChallengeResponse = { username: string; phrase: string; expires_at: string };
+  type VerifyResponse = { verified: boolean; username: string; reason?: string };
 
   const [stage, setStage] = useState<Stage>("input");
   const [username, setUsername] = useState("");
