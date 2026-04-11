@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import hackathonsData from "../data/hackathons.json";
 
@@ -78,7 +78,7 @@ type IconProps = {
 };
 
 type ChipProps = {
-  icon: (props: IconProps) => JSX.Element;
+  icon: (props: IconProps) => React.ReactElement;
   label: string;
   available?: boolean;
   type?: "neutral" | "green" | "blue";
