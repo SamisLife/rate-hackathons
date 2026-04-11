@@ -158,15 +158,38 @@ function pairKey(a: number, b: number): string {
   return `${Math.min(a, b)}-${Math.max(a, b)}`;
 }
 
-// Smart pairing — 4 phases, each exhausting before the next:
-//   1. attended ↔ attended         (user knows both — highest value)
-//   2. attended ↔ same-state       (user likely familiar, capped appearances)
-//   3. area ↔ area                 (all hackathons in user's attended states)
-//   4. random unseen               (anywhere, fully open)
-//
-// `appearances` counts how many times each hackathon has been shown.
-// Phases 2+ respect MAX_APPEARANCES so one hackathon can't dominate.
-const MAX_APPEARANCES = 3;
+// ── Persistent seen-pairs store (expires daily) ───────────────────────────────
+// Saves to localStorage so pairs don't repeat across page refreshes.
+// Key includes today's date so the slate clears each new day.
+
+function todayKey() {
+  return `rh_seen_${new Date().toISOString().slice(0, 10)}`;
+}
+
+function loadSeenPairs(): Set<string> {
+  try {
+    const raw = localStorage.getItem(todayKey());
+    if (raw) return new Set(JSON.parse(raw) as string[]);
+  } catch { /* ignore */ }
+  return new Set();
+}
+
+function saveSeenPairs(seen: Set<string>) {
+  try {
+    localStorage.setItem(todayKey(), JSON.stringify([...seen]));
+    // Clean up old keys
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith("rh_seen_") && k !== todayKey()) localStorage.removeItem(k);
+    }
+  } catch { /* ignore */ }
+}
+
+// ── Pairing algorithm ─────────────────────────────────────────────────────────
+//   Phase 1: attended ↔ attended (never seen today)
+//   Phase 2: attended ↔ same-state (never seen today)
+//   Phase 3: fully random from all hackathons (never seen today)
+//   Fallback: reset today's seen list and start over
 
 function nextPair(
   list: Hackathon[],
@@ -178,65 +201,50 @@ function nextPair(
   const src = list.filter((h) => !exclude.includes(h.id));
   const pool = src.length >= 2 ? src : list;
 
-  const appeared  = (h: Hackathon) => appearances.get(h.id) ?? 0;
-  const fresh     = (h: Hackathon) => appeared(h) < MAX_APPEARANCES;
-  const unseen    = (a: Hackathon, b: Hackathon) => !seen.has(pairKey(a.id, b.id));
-  const pickRandom = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+  const unseen = (a: Hackathon, b: Hackathon) => !seen.has(pairKey(a.id, b.id));
 
   const record = (a: Hackathon, b: Hackathon) => {
     seen.add(pairKey(a.id, b.id));
-    appearances.set(a.id, appeared(a) + 1);
-    appearances.set(b.id, appeared(b) + 1);
+    appearances.set(a.id, (appearances.get(a.id) ?? 0) + 1);
+    appearances.set(b.id, (appearances.get(b.id) ?? 0) + 1);
+    saveSeenPairs(seen);
   };
 
-  const attended    = pool.filter((h) =>  attendedIds.includes(h.id));
-  const nonAttended = pool.filter((h) => !attendedIds.includes(h.id));
+  // Returns all unseen pairs from left×right, fully shuffled.
+  const unseenPairs = (left: Hackathon[], right: Hackathon[]): [Hackathon, Hackathon][] => {
+    const pairs: [Hackathon, Hackathon][] = [];
+    for (const a of left)
+      for (const b of right)
+        if (a.id < b.id && unseen(a, b))
+          pairs.push([a, b]);
+    return shuffle(pairs);
+  };
+
+  const attended     = shuffle(pool.filter((h) =>  attendedIds.includes(h.id)));
+  const nonAttended  = shuffle(pool.filter((h) => !attendedIds.includes(h.id)));
   const attendedStates = new Set(attended.map((h) => h.state));
 
-  // Builds a randomly-ordered candidate list from two pools (no nested-loop bias).
-  const buildPairs = (left: Hackathon[], right: Hackathon[]): [Hackathon, Hackathon][] => {
-    const pairs: [Hackathon, Hackathon][] = [];
-    const sl = shuffle(left);
-    const sr = shuffle(right);
-    for (const a of sl)
-      for (const b of sr)
-        if (a.id !== b.id && a.id < b.id && unseen(a, b))
-          pairs.push([a, b]);
-    return shuffle(pairs); // shuffle the pairs list itself too
-  };
-
-  // Phase 1: attended vs attended (no cap — highest value)
+  // Phase 1: attended ↔ attended
   if (attended.length >= 2) {
-    const p1 = buildPairs(attended, attended);
+    const p1 = unseenPairs(attended, attended);
     if (p1.length) { record(p1[0][0], p1[0][1]); return p1[0]; }
   }
 
-  // Phase 2: attended vs same-state non-attended (appearance-capped)
+  // Phase 2: attended ↔ same-state
   if (attended.length >= 1) {
-    const attFresh   = attended.filter(fresh);
-    const sameState  = nonAttended.filter((h) => attendedStates.has(h.state) && fresh(h));
-    const p2 = buildPairs(attFresh, sameState).filter(([a, b]) => unseen(a, b));
+    const sameState = nonAttended.filter((h) => attendedStates.has(h.state));
+    const p2 = unseenPairs(attended, sameState);
     if (p2.length) { record(p2[0][0], p2[0][1]); return p2[0]; }
   }
 
-  // Phase 3: all hackathons in attended states vs each other (appearance-capped)
-  if (attendedStates.size > 0) {
-    const areaPool = shuffle(pool.filter((h) => attendedStates.has(h.state) && fresh(h)));
-    const p3 = buildPairs(areaPool, areaPool);
-    if (p3.length) { record(p3[0][0], p3[0][1]); return p3[0]; }
-  }
+  // Phase 3: fully random unseen pair from entire pool
+  const p3 = unseenPairs(pool, pool);
+  if (p3.length) { record(p3[0][0], p3[0][1]); return p3[0]; }
 
-  // Phase 4: fully random unseen pairs — appearances reset incrementally so
-  // the least-seen hackathons get priority, avoiding reruns.
-  const byAppearances = shuffle(pool).sort((a, b) => appeared(a) - appeared(b));
-  for (const h of byAppearances) {
-    const others = shuffle(pool.filter((o) => o.id !== h.id && unseen(h, o)));
-    if (others.length) { record(h, others[0]); return [h, others[0]]; }
-  }
-
-  // Absolute fallback — all pairs seen, reset and start fresh
+  // All pairs exhausted for today — reset and pick random
   seen.clear();
   appearances.clear();
+  saveSeenPairs(seen);
   const reset = shuffle(pool);
   record(reset[0], reset[1]);
   return [reset[0], reset[1]];
@@ -1933,7 +1941,8 @@ export default function RateHackathonsPage() {
   const [attendedIds, setAttendedIds] = useState<number[]>([]);
   const [lastVoteWeight, setLastVoteWeight] = useState<VoteWeight | null>(null);
   const [scoreMap, setScoreMap] = useState<Record<number, HackathonScore>>({});
-  const seenPairs    = useRef<Set<string>>(new Set());
+  // Load today's seen pairs from localStorage so refreshing doesn't repeat pairs
+  const seenPairs    = useRef<Set<string>>(typeof window !== "undefined" ? loadSeenPairs() : new Set());
   const appearances  = useRef<Map<number, number>>(new Map());
 
   const saveAccount = (user: AccountUser | null) => {
@@ -1955,8 +1964,6 @@ export default function RateHackathonsPage() {
   useEffect(() => {
     if (!account) {
       setAttendedIds([]);
-      seenPairs.current.clear();
-      appearances.current.clear();
       setPair(nextPair(DATA, [], seenPairs.current, appearances.current));
       return;
     }
@@ -1967,14 +1974,9 @@ export default function RateHackathonsPage() {
           ? DATA.filter((h) => data.hackathons!.some((s) => matchesHackathon(h.name, s.name))).map((h) => h.id)
           : [];
         setAttendedIds(ids);
-        // Reset session state so the very first pair is chosen by the algorithm
-        seenPairs.current.clear();
-        appearances.current.clear();
         setPair(nextPair(DATA, ids, seenPairs.current, appearances.current));
       })
       .catch(() => {
-        seenPairs.current.clear();
-        appearances.current.clear();
         setPair(nextPair(DATA, [], seenPairs.current, appearances.current));
       });
   }, [account?.username]);
@@ -2013,8 +2015,15 @@ export default function RateHackathonsPage() {
   );
 
   const sorted = useMemo(
-    () => [...hackathons].sort((a, b) => weightedWinRate(b) - weightedWinRate(a)),
-    [hackathons, weightedWinRate],
+    () => [...hackathons].sort((a, b) => {
+      const wrDiff = weightedWinRate(b) - weightedWinRate(a);
+      if (Math.abs(wrDiff) > 0.001) return wrDiff;
+      // Tiebreak: more weighted votes = more confidence = higher rank
+      const wvA = scoreMap[a.id]?.weightedVotes ?? 0;
+      const wvB = scoreMap[b.id]?.weightedVotes ?? 0;
+      return wvB - wvA;
+    }),
+    [hackathons, weightedWinRate, scoreMap],
   );
 
   const handleVote = useCallback(
