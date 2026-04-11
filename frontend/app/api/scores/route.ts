@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const GO_BASE = "http://localhost:8080";
+const GO_BASE = process.env.GO_BASE_URL ?? "http://localhost:8080";
 
 export async function GET() {
   try {
@@ -11,7 +11,6 @@ export async function GET() {
     const data = await res.json();
     return NextResponse.json(data);
   } catch {
-    // Graceful degradation — frontend falls back to static seed data
     return NextResponse.json({ scores: [] });
   }
 }

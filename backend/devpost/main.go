@@ -1070,6 +1070,47 @@ func scoresHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"scores": scores})
 }
 
+func migrate(db *sql.DB) error {
+	const schema = `
+	CREATE TABLE IF NOT EXISTS users (
+		id               TEXT        PRIMARY KEY,
+		username         TEXT        NOT NULL UNIQUE,
+		devpost_username TEXT        NOT NULL UNIQUE,
+		password_hash    TEXT        NOT NULL,
+		created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		token_jti        TEXT        NOT NULL UNIQUE
+	);
+
+	CREATE TABLE IF NOT EXISTS votes (
+		id         TEXT             PRIMARY KEY,
+		winner_id  INTEGER          NOT NULL,
+		loser_id   INTEGER          NOT NULL,
+		weight     DOUBLE PRECISION NOT NULL,
+		tier       TEXT             NOT NULL,
+		voter      TEXT             NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ      NOT NULL DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS votes_winner_id_idx ON votes (winner_id);
+	CREATE INDEX IF NOT EXISTS votes_loser_id_idx  ON votes (loser_id);
+
+	CREATE TABLE IF NOT EXISTS attendance_cache (
+		username         TEXT        PRIMARY KEY,
+		devpost_username TEXT        NOT NULL,
+		cached_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		hackathons       JSONB       NOT NULL DEFAULT '[]'
+	);
+
+	CREATE TABLE IF NOT EXISTS projects_cache (
+		username  TEXT        PRIMARY KEY,
+		cached_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		projects  JSONB       NOT NULL DEFAULT '[]'
+	);`
+
+	_, err := db.Exec(schema)
+	return err
+}
+
 func main() {
 	// ── Database connection ───────────────────────────────────────────────────
 	dsn := os.Getenv("DATABASE_URL")
@@ -1088,6 +1129,11 @@ func main() {
 	pgDB = db
 	voteRepo = newPGVoteRepo(db)
 	log.Println("Connected to PostgreSQL")
+
+	if err := migrate(db); err != nil {
+		log.Fatalf("migration failed: %v", err)
+	}
+	log.Println("Schema up to date")
 
 	// ── HTTP routes ───────────────────────────────────────────────────────────
 	http.HandleFunc("/health", withCORS(healthHandler))

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const GO_BASE = "http://localhost:8080";
+const GO_BASE = process.env.GO_BASE_URL ?? "http://localhost:8080";
 
 export async function POST(req: NextRequest) {
   try {
