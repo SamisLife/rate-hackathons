@@ -712,13 +712,15 @@ type Vote struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// HackathonScore is the aggregated weighted result for one hackathon.
+// HackathonScore is the aggregated result for one hackathon.
 type HackathonScore struct {
 	ID            int     `json:"id"`
-	RawVotes      int     `json:"rawVotes"`      // integer count of votes cast (for display)
-	WeightedVotes float64 `json:"weightedVotes"` // sum of weights (for ranking)
-	WeightedWins  float64 `json:"weightedWins"`  // sum of winner weights (for ranking)
+	RawVotes      int     `json:"rawVotes"`      // integer count of appearances (for display)
+	WeightedVotes float64 `json:"weightedVotes"` // sum of all weights seen
+	WeightedWins  float64 `json:"weightedWins"`  // sum of weights for wins
 	WinRate       float64 `json:"winRate"`        // weightedWins/weightedVotes×100
+	EloRating     float64 `json:"eloRating"`     // raw ELO (for sorting)
+	Score         float64 `json:"score"`          // ELO normalised to 0–10 (for display)
 }
 
 // ── VoteRepository abstraction ────────────────────────────────────────────────
@@ -746,37 +748,92 @@ func (r *pgVoteRepo) SaveVote(v Vote) error {
 }
 
 func (r *pgVoteRepo) Scores() ([]HackathonScore, error) {
-	const q = `
-		SELECT hackathon_id,
-		       COUNT(*)::int            AS raw_votes,
-		       SUM(weight)              AS weighted_votes,
-		       SUM(weight * is_win)     AS weighted_wins
-		FROM (
-		    SELECT winner_id AS hackathon_id, weight, 1.0::float8 AS is_win FROM votes
-		    UNION ALL
-		    SELECT loser_id  AS hackathon_id, weight, 0.0::float8 AS is_win FROM votes
-		) t
-		GROUP BY hackathon_id`
-	rows, err := r.db.Query(q)
+	// Replay votes in chronological order to compute ELO ratings.
+	// K-factor is scaled by vote weight so trusted votes move ratings more.
+	const startElo = 1500.0
+	const kBase    = 32.0
+
+	rows, err := r.db.Query(
+		`SELECT winner_id, loser_id, weight FROM votes ORDER BY created_at ASC`,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []HackathonScore
+
+	elos          := make(map[int]float64)
+	rawVotes      := make(map[int]int)
+	weightedWins  := make(map[int]float64)
+	weightedVotes := make(map[int]float64)
+
+	getElo := func(id int) float64 {
+		if e, ok := elos[id]; ok {
+			return e
+		}
+		return startElo
+	}
+
 	for rows.Next() {
-		var s HackathonScore
-		var wv, ww float64
-		if err := rows.Scan(&s.ID, &s.RawVotes, &wv, &ww); err != nil {
+		var winnerID, loserID int
+		var weight float64
+		if err := rows.Scan(&winnerID, &loserID, &weight); err != nil {
 			return nil, err
 		}
-		s.WeightedVotes = math.Round(wv*100) / 100
-		s.WeightedWins = math.Round(ww*100) / 100
-		if wv > 0 {
-			s.WinRate = math.Round((ww/wv)*100*100) / 100
-		}
-		out = append(out, s)
+
+		// Raw / weighted tallies
+		rawVotes[winnerID]++
+		rawVotes[loserID]++
+		weightedWins[winnerID]  += weight
+		weightedVotes[winnerID] += weight
+		weightedVotes[loserID]  += weight
+
+		// ELO update (weight scales K so high-trust votes matter more)
+		eA := getElo(winnerID)
+		eB := getElo(loserID)
+		expectedA := 1.0 / (1.0 + math.Pow(10, (eB-eA)/400.0))
+		k := kBase * weight
+		elos[winnerID] = eA + k*(1.0-expectedA)
+		elos[loserID]  = eB + k*(0.0-(1.0-expectedA))
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(rawVotes) == 0 {
+		return []HackathonScore{}, nil
+	}
+
+	// Normalise ELO to 0–10 across all hackathons that have been voted on.
+	minElo, maxElo := math.MaxFloat64, -math.MaxFloat64
+	for id := range rawVotes {
+		e := getElo(id)
+		if e < minElo { minElo = e }
+		if e > maxElo { maxElo = e }
+	}
+
+	out := make([]HackathonScore, 0, len(rawVotes))
+	for id := range rawVotes {
+		e   := getElo(id)
+		wv  := weightedVotes[id]
+		ww  := weightedWins[id]
+		wr  := 0.0
+		if wv > 0 { wr = (ww / wv) * 100 }
+
+		score10 := 5.0 // default when all hackathons are tied
+		if maxElo > minElo {
+			score10 = (e-minElo)/(maxElo-minElo)*10
+		}
+
+		out = append(out, HackathonScore{
+			ID:            id,
+			RawVotes:      rawVotes[id],
+			WeightedVotes: math.Round(wv*100) / 100,
+			WeightedWins:  math.Round(ww*100) / 100,
+			WinRate:       math.Round(wr*100) / 100,
+			EloRating:     math.Round(e*100) / 100,
+			Score:         math.Round(score10*10) / 10, // one decimal place
+		})
+	}
+	return out, nil
 }
 
 // ── Weight algorithm ──────────────────────────────────────────────────────────

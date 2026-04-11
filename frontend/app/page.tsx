@@ -35,10 +35,12 @@ type CardState = "idle" | "winner" | "loser";
 
 type HackathonScore = {
   id: number;
-  rawVotes: number;      // integer count of votes cast (display)
-  weightedVotes: number; // sum of weights (ranking)
-  weightedWins: number;  // sum of winner weights (ranking)
-  winRate: number;       // weightedWins/weightedVotes×100
+  rawVotes: number;
+  weightedVotes: number;
+  weightedWins: number;
+  winRate: number;
+  eloRating: number; // raw ELO for sorting
+  score: number;     // 0–10 normalised for display
 };
 
 type VoteWeight = { weight: number; tier: string };
@@ -1570,7 +1572,7 @@ function RankingRow({ h, i, score, maxScore, votes, expanded, onToggle }: { h: H
         <div style={{ width: 90, marginRight: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
             <span style={{ fontSize: 9, color: T.textSubtle, textTransform: "uppercase" }}>score</span>
-            <span style={{ fontSize: 10.5, color: T.greenLight, fontWeight: 600 }}>{score.toFixed(1)}</span>
+            <span style={{ fontSize: 10.5, color: T.greenLight, fontWeight: 600 }}>{score > 0 ? `${score.toFixed(1)}/10` : "—"}</span>
           </div>
           <div style={{ height: 4, borderRadius: 4, background: T.bgOverlay, overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${barPct}%`, background: `linear-gradient(90deg,${T.green},${T.greenLight})` }} />
@@ -2005,21 +2007,22 @@ export default function RateHackathonsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Score = sum of weights for wins (weightedWins). Falls back to 0 until real votes arrive.
+  // Sort by ELO (precise), display the 0–10 score.
   const hackScore = useCallback(
-    (h: Hackathon) => scoreMap[h.id]?.weightedWins ?? 0,
+    (h: Hackathon) => scoreMap[h.id]?.score ?? 0,
+    [scoreMap],
+  );
+  const hackElo = useCallback(
+    (h: Hackathon) => scoreMap[h.id]?.eloRating ?? 0,
     [scoreMap],
   );
 
   const sorted = useMemo(
-    () => [...hackathons].sort((a, b) => hackScore(b) - hackScore(a)),
-    [hackathons, hackScore],
+    () => [...hackathons].sort((a, b) => hackElo(b) - hackElo(a)),
+    [hackathons, hackElo],
   );
 
-  const maxScore = useMemo(
-    () => Math.max(1, ...sorted.map((h) => hackScore(h))),
-    [sorted, hackScore],
-  );
+  const maxScore = 10; // always 10 since we normalise to 0–10
 
   const handleVote = useCallback(
     (id: number) => {
@@ -2058,7 +2061,7 @@ export default function RateHackathonsPage() {
           // Optimistically update scoreMap so ranking reflects the new vote immediately
           setScoreMap((prev) => {
             const empty = (hid: number): HackathonScore => ({
-              id: hid, rawVotes: 0, weightedVotes: 0, weightedWins: 0, winRate: 0,
+              id: hid, rawVotes: 0, weightedVotes: 0, weightedWins: 0, winRate: 0, eloRating: 1500, score: 5,
             });
             const winner = { ...(prev[id] ?? empty(id)) };
             const loser  = { ...(prev[loserId] ?? empty(loserId)) };
