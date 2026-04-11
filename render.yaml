@@ -4,7 +4,6 @@ databases:
     plan: free
 
 services:
-  # Go backend
   - type: web
     name: rate-hackathons-backend
     runtime: go
@@ -18,11 +17,10 @@ services:
           name: rate-hackathons-db
           property: connectionString
       - key: ALLOWED_ORIGIN
-        value: https://rate-hackathons-frontend.onrender.com  # update to your frontend URL
+        value: https://rate-hackathons-frontend.onrender.com
       - key: PORT
         value: "8080"
 
-  # Next.js frontend
   - type: web
     name: rate-hackathons-frontend
     runtime: node
@@ -39,7 +37,6 @@ services:
         fromService:
           name: rate-hackathons-backend
           type: web
-          property: host
-          envVarKey: GO_BASE_URL
+          envVarKey: RENDER_EXTERNAL_URL
       - key: NODE_ENV
         value: production
