@@ -750,8 +750,9 @@ func (r *pgVoteRepo) SaveVote(v Vote) error {
 func (r *pgVoteRepo) Scores() ([]HackathonScore, error) {
 	// Replay votes in chronological order to compute ELO ratings.
 	// K-factor is scaled by vote weight so trusted votes move ratings more.
+	// K=16 (halved from classic 32) keeps early volatility reasonable.
 	const startElo = 1500.0
-	const kBase    = 32.0
+	const kBase    = 16.0
 
 	rows, err := r.db.Query(
 		`SELECT winner_id, loser_id, weight FROM votes ORDER BY created_at ASC`,
@@ -815,6 +816,7 @@ func (r *pgVoteRepo) Scores() ([]HackathonScore, error) {
 		e   := getElo(id)
 		wv  := weightedVotes[id]
 		ww  := weightedWins[id]
+		rv  := rawVotes[id]
 		wr  := 0.0
 		if wv > 0 { wr = (ww / wv) * 100 }
 
@@ -823,14 +825,22 @@ func (r *pgVoteRepo) Scores() ([]HackathonScore, error) {
 			score10 = (e-minElo)/(maxElo-minElo)*10
 		}
 
+		// Confidence pull: hackathons with few appearances are pulled toward 5.0
+		// (the neutral midpoint) proportionally to how "unproven" they are.
+		// At 1 vote: 80% pull toward center. At 10 votes: ~17%. At 20+: negligible.
+		// Formula: weight = votes / (votes + confidence_floor)
+		const confidenceFloor = 4.0
+		confidence := float64(rv) / (float64(rv) + confidenceFloor)
+		score10 = score10*confidence + 5.0*(1.0-confidence)
+
 		out = append(out, HackathonScore{
 			ID:            id,
-			RawVotes:      rawVotes[id],
+			RawVotes:      rv,
 			WeightedVotes: math.Round(wv*100) / 100,
 			WeightedWins:  math.Round(ww*100) / 100,
 			WinRate:       math.Round(wr*100) / 100,
 			EloRating:     math.Round(e*100) / 100,
-			Score:         math.Round(score10*10) / 10, // one decimal place
+			Score:         math.Round(score10*10) / 10,
 		})
 	}
 	return out, nil
