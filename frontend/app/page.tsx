@@ -1547,7 +1547,8 @@ function VoteCard({ h, onVote, state, isIdle }: { h: Hackathon; onVote: (id: num
   );
 }
 
-function RankingRow({ h, i, wr, expanded, onToggle }: { h: Hackathon; i: number; wr: number; expanded: boolean; onToggle: () => void }) {
+function RankingRow({ h, i, score, maxScore, votes, expanded, onToggle }: { h: Hackathon; i: number; score: number; maxScore: number; votes: number; expanded: boolean; onToggle: () => void }) {
+  const barPct = maxScore > 0 ? (score / maxScore) * 100 : 0;
   return (
     <div style={{ borderBottom: `1px solid ${T.borderMuted}`, background: expanded ? T.bgHover : "transparent" }}>
       <div onClick={onToggle} style={{ display: "flex", alignItems: "center", padding: "10px 16px", cursor: "pointer" }}>
@@ -1564,15 +1565,15 @@ function RankingRow({ h, i, wr, expanded, onToggle }: { h: Hackathon; i: number;
           <Chip icon={Ico.Plane} label="Travel" available={h.reimbursement} type="blue" compact />
         </div>
 
-        <div style={{ width: 64, marginRight: 16, fontSize: 11, color: T.textSubtle }}>{h.votes >= 1000 ? `${(h.votes / 1000).toFixed(1)}k` : h.votes} votes</div>
+        <div style={{ width: 52, marginRight: 16, fontSize: 11, color: T.textSubtle, textAlign: "right" }}>{votes} votes</div>
 
         <div style={{ width: 90, marginRight: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-            <span style={{ fontSize: 9, color: T.textSubtle, textTransform: "uppercase" }}>win rate</span>
-            <span style={{ fontSize: 10.5, color: T.greenLight, fontWeight: 600 }}>{wr.toFixed(1)}%</span>
+            <span style={{ fontSize: 9, color: T.textSubtle, textTransform: "uppercase" }}>score</span>
+            <span style={{ fontSize: 10.5, color: T.greenLight, fontWeight: 600 }}>{score.toFixed(1)}</span>
           </div>
           <div style={{ height: 4, borderRadius: 4, background: T.bgOverlay, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${Math.min(wr, 100)}%`, background: `linear-gradient(90deg,${T.green},${T.greenLight})` }} />
+            <div style={{ height: "100%", width: `${barPct}%`, background: `linear-gradient(90deg,${T.green},${T.greenLight})` }} />
           </div>
         </div>
 
@@ -2004,26 +2005,20 @@ export default function RateHackathonsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Weighted win rate: uses real weighted scores when available, falls back to seed data.
-  const weightedWinRate = useCallback(
-    (h: Hackathon) => {
-      const s = scoreMap[h.id];
-      if (s && s.weightedVotes > 0) return (s.weightedWins / s.weightedVotes) * 100;
-      return winRate(h); // fallback to seed data when no real votes yet
-    },
+  // Score = sum of weights for wins (weightedWins). Falls back to 0 until real votes arrive.
+  const hackScore = useCallback(
+    (h: Hackathon) => scoreMap[h.id]?.weightedWins ?? 0,
     [scoreMap],
   );
 
   const sorted = useMemo(
-    () => [...hackathons].sort((a, b) => {
-      const wrDiff = weightedWinRate(b) - weightedWinRate(a);
-      if (Math.abs(wrDiff) > 0.001) return wrDiff;
-      // Tiebreak: more weighted votes = more confidence = higher rank
-      const wvA = scoreMap[a.id]?.weightedVotes ?? 0;
-      const wvB = scoreMap[b.id]?.weightedVotes ?? 0;
-      return wvB - wvA;
-    }),
-    [hackathons, weightedWinRate, scoreMap],
+    () => [...hackathons].sort((a, b) => hackScore(b) - hackScore(a)),
+    [hackathons, hackScore],
+  );
+
+  const maxScore = useMemo(
+    () => Math.max(1, ...sorted.map((h) => hackScore(h))),
+    [sorted, hackScore],
   );
 
   const handleVote = useCallback(
@@ -2246,7 +2241,7 @@ export default function RateHackathonsPage() {
               </div>
 
               {sorted.map((h, i) => (
-                <RankingRow key={h.id} h={h} i={i} wr={weightedWinRate(h)} expanded={expanded === h.id} onToggle={() => setExpanded(expanded === h.id ? null : h.id)} />
+                <RankingRow key={h.id} h={h} i={i} score={hackScore(h)} maxScore={maxScore} votes={scoreMap[h.id]?.rawVotes ?? 0} expanded={expanded === h.id} onToggle={() => setExpanded(expanded === h.id ? null : h.id)} />
               ))}
             </div>
           </div>
