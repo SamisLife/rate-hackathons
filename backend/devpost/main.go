@@ -2,10 +2,12 @@ package main
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"math"
 	"math/big"
 	"net/http"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	_ "github.com/lib/pq"
 )
 
 // word list for key phrases
@@ -99,9 +102,20 @@ var wordList = []string{
 // to the same canonical form for comparison.
 var nonAlphaRe = regexp.MustCompile(`[^a-z]+`)
 
+// pgDB is the active database connection, set in main().
+var pgDB *sql.DB
+
+// allowedOrigin is the CORS origin. Set ALLOWED_ORIGIN in production.
+var allowedOrigin = func() string {
+	if o := os.Getenv("ALLOWED_ORIGIN"); o != "" {
+		return o
+	}
+	return "http://localhost:3000"
+}()
+
 func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Access-Control-Max-Age", "600")
@@ -698,11 +712,6 @@ type Vote struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// VotesFile is the on-disk shape of votes.json.
-type VotesFile struct {
-	Votes []Vote `json:"votes"`
-}
-
 // HackathonScore is the aggregated weighted result for one hackathon.
 type HackathonScore struct {
 	ID            int     `json:"id"`
@@ -721,95 +730,53 @@ type VoteRepository interface {
 	Scores() ([]HackathonScore, error)
 }
 
-// ── JSON (flat-file) implementation ──────────────────────────────────────────
+// ── PostgreSQL implementation ─────────────────────────────────────────────────
 
-type jsonVoteRepo struct {
-	mu        sync.Mutex
-	votesPath string
+type pgVoteRepo struct{ db *sql.DB }
+
+func newPGVoteRepo(db *sql.DB) *pgVoteRepo { return &pgVoteRepo{db: db} }
+
+func (r *pgVoteRepo) SaveVote(v Vote) error {
+	_, err := r.db.Exec(
+		`INSERT INTO votes (id, winner_id, loser_id, weight, tier, voter, created_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		v.ID, v.WinnerID, v.LoserID, v.Weight, v.Tier, v.Voter, v.CreatedAt,
+	)
+	return err
 }
 
-func newJSONVoteRepo(dir string) *jsonVoteRepo {
-	return &jsonVoteRepo{votesPath: filepath.Join(dir, "votes.json")}
-}
-
-func (r *jsonVoteRepo) readLocked() (VotesFile, error) {
-	data, err := os.ReadFile(r.votesPath)
-	if os.IsNotExist(err) {
-		return VotesFile{Votes: []Vote{}}, nil
-	}
-	if err != nil {
-		return VotesFile{}, err
-	}
-	var vf VotesFile
-	return vf, json.Unmarshal(data, &vf)
-}
-
-func (r *jsonVoteRepo) writeLocked(vf VotesFile) error {
-	if err := os.MkdirAll(filepath.Dir(r.votesPath), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(vf, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(r.votesPath, data, 0o644)
-}
-
-func (r *jsonVoteRepo) SaveVote(v Vote) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	vf, err := r.readLocked()
-	if err != nil {
-		return err
-	}
-	vf.Votes = append(vf.Votes, v)
-	return r.writeLocked(vf)
-}
-
-func (r *jsonVoteRepo) Scores() ([]HackathonScore, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	vf, err := r.readLocked()
+func (r *pgVoteRepo) Scores() ([]HackathonScore, error) {
+	const q = `
+		SELECT hackathon_id,
+		       COUNT(*)::int            AS raw_votes,
+		       SUM(weight)              AS weighted_votes,
+		       SUM(weight * is_win)     AS weighted_wins
+		FROM (
+		    SELECT winner_id AS hackathon_id, weight, 1.0::float8 AS is_win FROM votes
+		    UNION ALL
+		    SELECT loser_id  AS hackathon_id, weight, 0.0::float8 AS is_win FROM votes
+		) t
+		GROUP BY hackathon_id`
+	rows, err := r.db.Query(q)
 	if err != nil {
 		return nil, err
 	}
-
-	type agg struct {
-		wins     float64
-		total    float64
-		rawVotes int
-	}
-	m := make(map[int]*agg)
-	ensure := func(id int) {
-		if m[id] == nil {
-			m[id] = &agg{}
+	defer rows.Close()
+	var out []HackathonScore
+	for rows.Next() {
+		var s HackathonScore
+		var wv, ww float64
+		if err := rows.Scan(&s.ID, &s.RawVotes, &wv, &ww); err != nil {
+			return nil, err
 		}
-	}
-	for _, v := range vf.Votes {
-		ensure(v.WinnerID)
-		ensure(v.LoserID)
-		m[v.WinnerID].wins += v.Weight
-		m[v.WinnerID].total += v.Weight
-		m[v.WinnerID].rawVotes++
-		m[v.LoserID].total += v.Weight
-		m[v.LoserID].rawVotes++
-	}
-
-	scores := make([]HackathonScore, 0, len(m))
-	for id, a := range m {
-		wr := 0.0
-		if a.total > 0 {
-			wr = (a.wins / a.total) * 100
+		s.WeightedVotes = math.Round(wv*100) / 100
+		s.WeightedWins = math.Round(ww*100) / 100
+		if wv > 0 {
+			s.WinRate = math.Round((ww/wv)*100*100) / 100
 		}
-		scores = append(scores, HackathonScore{
-			ID:            id,
-			RawVotes:      a.rawVotes,
-			WeightedVotes: math.Round(a.total*100) / 100,
-			WeightedWins:  math.Round(a.wins*100) / 100,
-			WinRate:       math.Round(wr*100) / 100,
-		})
+		out = append(out, s)
 	}
-	return scores, nil
+	return out, rows.Err()
 }
 
 // ── Weight algorithm ──────────────────────────────────────────────────────────
@@ -855,16 +822,29 @@ func loadStaticHackathons(dir string) ([]staticHackathon, error) {
 	return hacks, json.Unmarshal(data, &hacks)
 }
 
-func loadAttendanceCache(dir string) (map[string]attendanceCacheEntry, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "attended_hackathons.json"))
-	if os.IsNotExist(err) {
-		return map[string]attendanceCacheEntry{}, nil
-	}
+func loadAttendanceCache() (map[string]attendanceCacheEntry, error) {
+	const q = `SELECT username, devpost_username, cached_at, hackathons FROM attendance_cache`
+	rows, err := pgDB.Query(q)
 	if err != nil {
 		return nil, err
 	}
-	var ac map[string]attendanceCacheEntry
-	return ac, json.Unmarshal(data, &ac)
+	defer rows.Close()
+	ac := make(map[string]attendanceCacheEntry)
+	for rows.Next() {
+		var username string
+		var entry attendanceCacheEntry
+		var cachedAt time.Time
+		var hackJSON []byte
+		if err := rows.Scan(&username, &entry.DevpostUsername, &cachedAt, &hackJSON); err != nil {
+			return nil, err
+		}
+		entry.CachedAt = cachedAt.UTC().Format(time.RFC3339Nano)
+		if err := json.Unmarshal(hackJSON, &entry.Hackathons); err != nil {
+			return nil, err
+		}
+		ac[username] = entry
+	}
+	return ac, rows.Err()
 }
 
 // normHackName strips all non-letter characters and lowercases, so
@@ -967,7 +947,7 @@ func ComputeWeight(voterUsername string, hackAID, hackBID int) WeightResult {
 	}
 
 	// ── Load voter attendance ─────────────────────────────────────────────────
-	ac, err := loadAttendanceCache(dataDir)
+	ac, err := loadAttendanceCache()
 	if err != nil {
 		return fallback(TierVerifiedNoAttend)
 	}
@@ -1032,9 +1012,8 @@ func newVoteID() string {
 	return fmt.Sprintf("%x", b)
 }
 
-// voteRepo is the active VoteRepository.
-// To swap to a DB in production, replace with a DB-backed VoteRepository.
-var voteRepo VoteRepository = newJSONVoteRepo(dataDir)
+// voteRepo is set in main() after the DB connection is established.
+var voteRepo VoteRepository
 
 // POST /vote
 // Body: { "winnerId": 1, "loserId": 2, "voter": "username-or-empty" }
@@ -1092,6 +1071,25 @@ func scoresHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	// ── Database connection ───────────────────────────────────────────────────
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		log.Fatal("DATABASE_URL environment variable is required")
+	}
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
+	if err := db.Ping(); err != nil {
+		log.Fatalf("failed to connect to database: %v", err)
+	}
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	pgDB = db
+	voteRepo = newPGVoteRepo(db)
+	log.Println("Connected to PostgreSQL")
+
+	// ── HTTP routes ───────────────────────────────────────────────────────────
 	http.HandleFunc("/health", withCORS(healthHandler))
 	http.HandleFunc("/bio", withCORS(bioHandler))
 	http.HandleFunc("/challenge", withCORS(challengeHandler))
@@ -1101,8 +1099,12 @@ func main() {
 	http.HandleFunc("/vote", withCORS(voteHandler))
 	http.HandleFunc("/scores", withCORS(scoresHandler))
 
-	fmt.Println("Server running on http://localhost:8080")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	fmt.Printf("Server running on :%s\n", port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		panic(err)
 	}
 }

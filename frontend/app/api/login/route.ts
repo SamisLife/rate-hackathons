@@ -1,38 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { promises as fs } from "fs";
-import path from "path";
 import crypto from "crypto";
-
-type User = {
-  id: string;
-  username: string;
-  devpostUsername: string;
-  passwordHash: string;
-  createdAt: string;
-  tokenJti: string;
-};
-
-type Db = { users: User[] };
-
-const DB_PATH = path.join(process.cwd(), "data", "users.json");
-
-async function readDb(): Promise<Db> {
-  try {
-    const raw = await fs.readFile(DB_PATH, "utf8");
-    return JSON.parse(raw) as Db;
-  } catch {
-    return { users: [] };
-  }
-}
+import pool from "@/lib/db";
 
 function hashPassword(password: string): string {
-  // PoC only: replace with bcrypt/argon2 before production use.
   return crypto.createHash("sha256").update(password).digest("hex");
 }
 
 export async function POST(req: NextRequest) {
   let body: { username?: string; password?: string };
-
   try {
     body = await req.json();
   } catch {
@@ -40,17 +15,17 @@ export async function POST(req: NextRequest) {
   }
 
   const { username, password } = body;
-
   if (!username || !password) {
     return NextResponse.json({ error: "username and password are required." }, { status: 400 });
   }
 
-  const db = await readDb();
-  const user = db.users.find(
-    (u) => u.username.toLowerCase() === username.trim().toLowerCase(),
+  const result = await pool.query(
+    "SELECT username, devpost_username, password_hash, created_at FROM users WHERE LOWER(username) = LOWER($1)",
+    [username.trim()],
   );
 
-  if (!user || user.passwordHash !== hashPassword(password)) {
+  const user = result.rows[0];
+  if (!user || user.password_hash !== hashPassword(password)) {
     return NextResponse.json({ error: "Invalid username or password." }, { status: 401 });
   }
 
@@ -58,8 +33,8 @@ export async function POST(req: NextRequest) {
     ok: true,
     user: {
       username: user.username,
-      devpostUsername: user.devpostUsername,
-      createdAt: user.createdAt,
+      devpostUsername: user.devpost_username,
+      createdAt: user.created_at,
     },
   });
 }

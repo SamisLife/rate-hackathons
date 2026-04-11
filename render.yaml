@@ -1,0 +1,45 @@
+databases:
+  - name: rate-hackathons-db
+    databaseName: rate_hackathons
+    plan: free
+
+services:
+  # Go backend
+  - type: web
+    name: rate-hackathons-backend
+    runtime: go
+    rootDir: backend/devpost
+    buildCommand: go build -o server .
+    startCommand: ./server
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rate-hackathons-db
+          property: connectionString
+      - key: ALLOWED_ORIGIN
+        value: https://rate-hackathons-frontend.onrender.com  # update to your frontend URL
+      - key: PORT
+        value: "8080"
+
+  # Next.js frontend
+  - type: web
+    name: rate-hackathons-frontend
+    runtime: node
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rate-hackathons-db
+          property: connectionString
+      - key: GO_BASE_URL
+        fromService:
+          name: rate-hackathons-backend
+          type: web
+          property: host
+          envVarKey: GO_BASE_URL
+      - key: NODE_ENV
+        value: production

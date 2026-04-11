@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { promises as fs } from "fs";
-import path from "path";
+import pool from "@/lib/db";
+
+const GO_BASE = process.env.GO_BASE_URL ?? "http://localhost:8080";
 
 type ScrapedHackathon = {
   id: string;
@@ -15,49 +16,6 @@ type ScrapedHackathon = {
   participants: string;
 };
 
-type CacheEntry = {
-  devpostUsername: string;
-  cachedAt: string;
-  hackathons: ScrapedHackathon[];
-};
-
-type Cache = Record<string, CacheEntry>;
-
-type UserDb = {
-  users: {
-    username: string;
-    devpostUsername: string;
-    passwordHash: string;
-    createdAt: string;
-    tokenJti: string;
-  }[];
-};
-
-const USERS_PATH  = path.join(process.cwd(), "data", "users.json");
-const CACHE_PATH  = path.join(process.cwd(), "data", "attended_hackathons.json");
-const GO_BASE     = "http://localhost:8080";
-
-async function readUsers(): Promise<UserDb> {
-  try {
-    return JSON.parse(await fs.readFile(USERS_PATH, "utf8")) as UserDb;
-  } catch {
-    return { users: [] };
-  }
-}
-
-async function readCache(): Promise<Cache> {
-  try {
-    return JSON.parse(await fs.readFile(CACHE_PATH, "utf8")) as Cache;
-  } catch {
-    return {};
-  }
-}
-
-async function writeCache(cache: Cache): Promise<void> {
-  await fs.mkdir(path.dirname(CACHE_PATH), { recursive: true });
-  await fs.writeFile(CACHE_PATH, JSON.stringify(cache, null, 2), "utf8");
-}
-
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ username: string }> },
@@ -65,36 +23,40 @@ export async function GET(
   const { username } = await params;
   const refresh = req.nextUrl.searchParams.get("refresh") === "true";
 
-  // Find the user to get their devpost username
-  const db = await readUsers();
-  const user = db.users.find(
-    (u) => u.username.toLowerCase() === username.toLowerCase(),
+  // Resolve devpost username
+  const userResult = await pool.query(
+    "SELECT devpost_username FROM users WHERE LOWER(username) = LOWER($1)",
+    [username],
   );
-  if (!user) {
+  if (!userResult.rowCount) {
     return NextResponse.json({ error: "User not found." }, { status: 404 });
   }
+  const devpostUsername = userResult.rows[0].devpost_username as string;
 
-  const cache = await readCache();
-  const entry = cache[username.toLowerCase()];
-
-  // Return cache if present and not a forced refresh
-  if (entry && !refresh) {
-    return NextResponse.json({ hackathons: entry.hackathons, cachedAt: entry.cachedAt });
+  // Return cached data if fresh enough
+  if (!refresh) {
+    const cached = await pool.query(
+      "SELECT hackathons, cached_at FROM attendance_cache WHERE username = LOWER($1)",
+      [username],
+    );
+    if (cached.rowCount) {
+      return NextResponse.json({
+        hackathons: cached.rows[0].hackathons,
+        cachedAt: cached.rows[0].cached_at,
+      });
+    }
   }
 
   // Fetch from Go scraper
   let scraped: ScrapedHackathon[];
   try {
     const res = await fetch(
-      `${GO_BASE}/hackathons?username=${encodeURIComponent(user.devpostUsername)}`,
+      `${GO_BASE}/hackathons?username=${encodeURIComponent(devpostUsername)}`,
       { signal: AbortSignal.timeout(20_000) },
     );
     if (!res.ok) {
       const body = (await res.json()) as { error?: string };
-      return NextResponse.json(
-        { error: body.error ?? "Scraper error." },
-        { status: 502 },
-      );
+      return NextResponse.json({ error: body.error ?? "Scraper error." }, { status: 502 });
     }
     const data = (await res.json()) as { hackathons: ScrapedHackathon[] };
     scraped = data.hackathons;
@@ -105,14 +67,16 @@ export async function GET(
     );
   }
 
-  // Persist to cache
-  const newEntry: CacheEntry = {
-    devpostUsername: user.devpostUsername,
-    cachedAt: new Date().toISOString(),
-    hackathons: scraped,
-  };
-  cache[username.toLowerCase()] = newEntry;
-  await writeCache(cache);
+  // Upsert into DB
+  await pool.query(
+    `INSERT INTO attendance_cache (username, devpost_username, cached_at, hackathons)
+     VALUES (LOWER($1), $2, NOW(), $3)
+     ON CONFLICT (username) DO UPDATE
+       SET devpost_username = EXCLUDED.devpost_username,
+           cached_at        = EXCLUDED.cached_at,
+           hackathons       = EXCLUDED.hackathons`,
+    [username, devpostUsername, JSON.stringify(scraped)],
+  );
 
-  return NextResponse.json({ hackathons: scraped, cachedAt: newEntry.cachedAt });
+  return NextResponse.json({ hackathons: scraped, cachedAt: new Date().toISOString() });
 }

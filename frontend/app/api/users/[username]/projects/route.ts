@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { promises as fs } from "fs";
-import path from "path";
+import pool from "@/lib/db";
+
+const GO_BASE = process.env.GO_BASE_URL ?? "http://localhost:8080";
 
 type ScrapedProject = {
   id: string;
@@ -14,42 +15,6 @@ type ScrapedProject = {
   prizeCategory: string;
 };
 
-type CacheEntry = {
-  cachedAt: string;
-  projects: ScrapedProject[];
-};
-
-type Cache = Record<string, CacheEntry>;
-
-type UserDb = {
-  users: {
-    username: string;
-    devpostUsername: string;
-    passwordHash: string;
-    createdAt: string;
-    tokenJti: string;
-  }[];
-};
-
-const USERS_PATH = path.join(process.cwd(), "data", "users.json");
-const CACHE_PATH = path.join(process.cwd(), "data", "projects_cache.json");
-const GO_BASE    = "http://localhost:8080";
-
-async function readUsers(): Promise<UserDb> {
-  try { return JSON.parse(await fs.readFile(USERS_PATH, "utf8")) as UserDb; }
-  catch { return { users: [] }; }
-}
-
-async function readCache(): Promise<Cache> {
-  try { return JSON.parse(await fs.readFile(CACHE_PATH, "utf8")) as Cache; }
-  catch { return {}; }
-}
-
-async function writeCache(cache: Cache): Promise<void> {
-  await fs.mkdir(path.dirname(CACHE_PATH), { recursive: true });
-  await fs.writeFile(CACHE_PATH, JSON.stringify(cache, null, 2), "utf8");
-}
-
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ username: string }> },
@@ -57,25 +22,35 @@ export async function GET(
   const { username } = await params;
   const refresh = req.nextUrl.searchParams.get("refresh") === "true";
 
-  const db = await readUsers();
-  const user = db.users.find(
-    (u) => u.username.toLowerCase() === username.toLowerCase(),
+  // Resolve devpost username
+  const userResult = await pool.query(
+    "SELECT devpost_username FROM users WHERE LOWER(username) = LOWER($1)",
+    [username],
   );
-  if (!user) {
+  if (!userResult.rowCount) {
     return NextResponse.json({ error: "User not found." }, { status: 404 });
   }
+  const devpostUsername = userResult.rows[0].devpost_username as string;
 
-  const cache = await readCache();
-  const entry = cache[username.toLowerCase()];
-
-  if (entry && !refresh) {
-    return NextResponse.json({ projects: entry.projects, cachedAt: entry.cachedAt });
+  // Return cached data if fresh enough
+  if (!refresh) {
+    const cached = await pool.query(
+      "SELECT projects, cached_at FROM projects_cache WHERE username = LOWER($1)",
+      [username],
+    );
+    if (cached.rowCount) {
+      return NextResponse.json({
+        projects: cached.rows[0].projects,
+        cachedAt: cached.rows[0].cached_at,
+      });
+    }
   }
 
+  // Fetch from Go scraper
   let scraped: ScrapedProject[];
   try {
     const res = await fetch(
-      `${GO_BASE}/projects?username=${encodeURIComponent(user.devpostUsername)}`,
+      `${GO_BASE}/projects?username=${encodeURIComponent(devpostUsername)}`,
       { signal: AbortSignal.timeout(60_000) },
     );
     if (!res.ok) {
@@ -91,9 +66,15 @@ export async function GET(
     );
   }
 
-  const newEntry: CacheEntry = { cachedAt: new Date().toISOString(), projects: scraped };
-  cache[username.toLowerCase()] = newEntry;
-  await writeCache(cache);
+  // Upsert into DB
+  await pool.query(
+    `INSERT INTO projects_cache (username, cached_at, projects)
+     VALUES (LOWER($1), NOW(), $2)
+     ON CONFLICT (username) DO UPDATE
+       SET cached_at = EXCLUDED.cached_at,
+           projects  = EXCLUDED.projects`,
+    [username, JSON.stringify(scraped)],
+  );
 
-  return NextResponse.json({ projects: scraped, cachedAt: newEntry.cachedAt });
+  return NextResponse.json({ projects: scraped, cachedAt: new Date().toISOString() });
 }
