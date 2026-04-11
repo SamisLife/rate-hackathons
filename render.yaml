@@ -34,9 +34,6 @@ services:
           name: rate-hackathons-db
           property: connectionString
       - key: GO_BASE_URL
-        fromService:
-          name: rate-hackathons-backend
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
+        value: https://rate-hackathons-backend.onrender.com
       - key: NODE_ENV
         value: production

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
+import { goFetch } from "@/lib/goFetch";
 
 const GO_BASE = process.env.GO_BASE_URL ?? "http://localhost:8080";
 
@@ -49,16 +50,14 @@ export async function GET(
   // Fetch from Go scraper
   let scraped: ScrapedProject[];
   try {
-    const res = await fetch(
+    const { res, data } = await goFetch(
       `${GO_BASE}/projects?username=${encodeURIComponent(devpostUsername)}`,
       { signal: AbortSignal.timeout(60_000) },
     );
     if (!res.ok) {
-      const body = (await res.json()) as { error?: string };
-      return NextResponse.json({ error: body.error ?? "Scraper error." }, { status: 502 });
+      return NextResponse.json({ error: (data as { error?: string }).error ?? "Scraper error." }, { status: 502 });
     }
-    const data = (await res.json()) as { projects: ScrapedProject[] };
-    scraped = data.projects;
+    scraped = (data as { projects: ScrapedProject[] }).projects;
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to reach scraper." },
